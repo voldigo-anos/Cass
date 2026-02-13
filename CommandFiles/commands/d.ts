@@ -62,7 +62,7 @@ export async function event({ output, input, threadsDB }: CommandContext) {
     }
     const prompt = String(input);
     if (
-      prompt.match(/^https:\/\/(www\.)?(facebook\.com|fb\.watch)/)?.length > 0
+      prompt.match(/^https:\/\/(?:www\.)?(?:facebook\.com\/(?:share\/r\/[A-Za-z0-9_-]+|reel\/[0-9]+|videos\/[0-9]+(?:\/[A-Za-z0-9_-]+)?|[A-Za-z0-9._-]+\/videos\/[0-9]+)|fb\.watch\/[A-Za-z0-9_-]+\/?)(?:\/?.*)$/)?.length > 0
     ) {
       output.react("🔎");
       const data = await getFbVideoInfo(prompt);
