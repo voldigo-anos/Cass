@@ -13,15 +13,16 @@
   "knownURL": "https://cassidyredux.onrender.com",
   "noFB": false,
   "PREFIX": "#",
-  "NICKNAME": "۝𝐶𝐻𝑅𝐼𝑆𝑇𝑈𝑆۝",
+  "NICKNAME": "Christus",
   "CUSTOM_STYLE": {
     "enabled": false,
     "note": "When enabled, this will allow you to customize certain styles of bot responses. {word} represents non-emoji texts and {emojis} represents emojis. Change the TITLE_PATTERN to your likings.",
     "TITLE_PATTERN": "{emojis}【 {word} 】{emojis}"
   },
-  "LOGO": "𝐂𝐇𝐑𝐈𝐒𝐓𝐔𝐒 𝐁𝐎𝐓",
+  "VERBOSE_LOGGING": false,
+  "LOGO": "𝗖𝗛𝗥𝗜𝗦𝗧𝗨𝗦 𝗕𝗢𝗧",
   "ADMINBOT": ["61580333625022", "61568791604271"],
-  "EXTRAPREFIX": ["+","¥"],
+  "EXTRAPREFIX": ["+"],
   "MODERATORBOT": [],
   "exitOnError": false,
   "WEB_PASSWORD": "wsshiagwvkljijxxsvddidbdib+_*77s",
@@ -60,13 +61,13 @@
     "userAgent": "Mozilla/5.0 (Linux; Android 10; MI 8 Lite Build/QKQ1.190910.002) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.96 Mobile Safari/537.36 YaApp_Android/10.91 YaSearchBrowser/10.91",
     "strictCompatibility": true
   },
-  "autoRefreshAvatar": true,
+  "autoRefreshAvatar": false,
   "defaultLang": "en",
   "CASS_WATCH": {
     "enabled": false,
     "note": "Cassidy Watch is a powerful file backup system that uses meta.version to track changes to your files. It is highly recommended to keep this enabled."
   },
-  "autoCreateDB": true,
+  "autoCreateDB": false,
   "MongoConfig": {
     "status": true,
     "uri": "MONGO_URI",
@@ -96,7 +97,7 @@
   "silentNotiMode": false,
   "verboseErrorStacks": false,
   "verboseBotMode": false,
-  "gambleNeedsMint": false,
+  "gambleNeedsMint": true,
   "strictGambleNeedsMint": true,
   "DEBUG": false,
   "DEBUG_PROPS": [
