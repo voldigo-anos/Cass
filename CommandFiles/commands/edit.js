@@ -4,12 +4,11 @@ import { UNISpectra } from "@cassidy/unispectra";
 
 export const meta: CommandMeta = {
   name: "edit",
-  aliases: [],
-  author: "Christus",
-  version: "2.0.0",
-  description: "Generate or edit images using AI",
-  category: "AI",
-  usage: "{prefix}{name} <prompt> (reply to an image)",
+  description: "Edit images using AI prompts",
+  author: "Christus dev AI",
+  version: "1.0.0",
+  usage: "{prefix}edit <prompt>",
+  category: "Image Generator",
   role: 0,
   waitingTime: 5,
   icon: "🖼️",
@@ -17,98 +16,115 @@ export const meta: CommandMeta = {
 };
 
 export const style: CommandStyle = {
-  title: "🖌️ Christus • Image Editor",
+  title: "Edit • AI Image Editor 🖼️",
   titleFont: "bold",
   contentFont: "fancy",
 };
 
 export const langs = {
-  fr: {
-    noPrompt:
-      "❌ Veuillez fournir un prompt.\nExemple: !edit cyberpunk style",
-    noImage:
-      "🖼️ Veuillez répondre à une image.",
-    processing:
-      "⏳ Traitement de votre image...",
-    success:
-      "🖌️ Image modifiée avec succès.",
-    fail:
-      "❌ Impossible de traiter l'image.",
-  },
-
   en: {
     noPrompt:
-      "❌ Please provide a prompt.\nExample: !edit cyberpunk style",
+      "⚠️ Please provide a prompt.\nExample: {prefix}edit make it cyberpunk",
+
     noImage:
       "🖼️ Please reply to an image.",
+
     processing:
-      "⏳ Processing your image...",
+      "⏳ Editing image...\nPlease wait...",
+
     success:
-      "🖌️ Image edited successfully.",
-    fail:
+      "✅ Image edited successfully!",
+
+    failed:
       "❌ Failed to process image.",
-  }
+  },
 };
 
 export const entry = defineEntry(
-  async ({ output, args, langParser, event }) => {
+  async ({
+    args,
+    output,
+    input,
+    langParser,
+  }) => {
 
-    const t = langParser.createGetLang(langs);
-
-    const prompt = args.join(" ").trim();
-
-    if (!prompt) {
-      return output.reply(t("noPrompt"));
-    }
-
-    const replied =
-      event.messageReply?.attachments?.[0];
-
-    if (!replied || replied.type !== "photo") {
-      return output.reply(t("noImage"));
-    }
-
-    const imageUrl = replied.url;
-
-    const loadingMsg =
-      await output.reply(t("processing"));
+    const getLang =
+      langParser.createGetLang(langs);
 
     try {
 
-      const apiUrl =
-        `https://azadx69x.is-a.dev/api/editor?url=${encodeURIComponent(imageUrl)}&prompt=${encodeURIComponent(prompt)}`;
+      const prompt =
+        args.join(" ").trim();
 
-      const response = await axios.get(apiUrl, {
-        responseType: "stream",
-        timeout: 120000,
-        headers: {
-          Accept: "*/*",
-          Connection: "keep-alive",
-          "User-Agent":
-            "Mozilla/5.0"
-        }
-      });
+      if (!prompt) {
 
-      await output.reply({
-        body:
-          `${UNISpectra.charm} ${t("success")}\n` +
-          `📝 Prompt: ${prompt}`,
-        attachment: response.data
-      });
+        output.react("⚠️");
 
-      if (loadingMsg?.messageID) {
-        output.unsend(loadingMsg.messageID);
+        return output.reply(
+          getLang("noPrompt")
+        );
       }
 
-    } catch (err) {
+      const repliedImage =
+        input.replier?.attachments?.[0];
 
-      console.error("EDIT ERROR:", err);
+      const imageURL =
+        repliedImage?.url;
 
-      if (loadingMsg?.messageID) {
-        output.unsend(loadingMsg.messageID);
+      if (!imageURL) {
+
+        output.react("🖼️");
+
+        return output.reply(
+          getLang("noImage")
+        );
       }
 
-      output.reply(t("fail"));
+      output.react("⏳");
+
+      const apiURL =
+        `https://azadx69x.is-a.dev/api/editor?url=${encodeURIComponent(imageURL)}&prompt=${encodeURIComponent(prompt)}`;
+
+      const response =
+        await axios.get(apiURL, {
+          responseType: "stream",
+          timeout: 180000,
+          headers: {
+            Accept: "*/*",
+            "User-Agent":
+              "Mozilla/5.0",
+          },
+        });
+
+      await output.replyStyled(
+        {
+          body:
+            `${UNISpectra.charm} ${getLang("success")}\n\n` +
+            `📝 Prompt: ${prompt}`,
+
+          attachment:
+            response.data,
+        },
+
+        style
+      );
+
+      output.react("✅");
+
+    } catch (err: any) {
+
+      console.error(
+        "Edit Error:",
+        err?.message || err
+      );
+
+      output.react("❌");
+
+      return output.reply(
+        `${getLang("failed")}\n\n📝 ${
+          err?.message || "Unknown error"
+        }`
+      );
     }
   }
 );
