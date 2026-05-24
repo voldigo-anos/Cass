@@ -1,28 +1,26 @@
+// @ts-check
 import axios from "axios";
-import fs from "fs";
+import fs from "fs-extra";
 import path from "path";
-import { fileURLToPath } from "url";
-import { defineEntry } from "@cass/define";
-import { UNISpectra } from "@cassidy/unispectra";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import os from "os";
 
 export const meta: CommandMeta = {
   name: "gem",
-  author: "Kay • fixed by Christus",
-  version: "2.0.0",
-  description: "Generate artistic AI images",
+  otherNames: ["art", "generate"],
+  description: "🎨 Génère ou édite des images artistiques avec l'IA",
+  author: "Christus",
+  version: "2.0",
+  usage: "{prefix}gem <prompt> [--r X:Y] [--nw]",
   category: "AI",
-  usage: "{prefix}{name} <prompt> [--r X:Y] [--nw]",
-  role: 2,
+  role: 3,
+  noPrefix: false,
   waitingTime: 5,
+  requirement: "3.0.0",
   icon: "🎨",
-  noLevelUI: true,
 };
 
 export const style: CommandStyle = {
-  title: "🎨 Christus • GEM AI",
+  title: "🎨 GEM Art Generator",
   titleFont: "bold",
   contentFont: "fancy",
 };
@@ -30,145 +28,145 @@ export const style: CommandStyle = {
 export const langs = {
   en: {
     noPrompt: "🎨 | Please provide a prompt.",
-    fail: "❌ | Failed to generate image.",
+    processing: "🎨 | Creating your masterpiece...",
+    success: "🎨✨ | Masterpiece created!{mode}",
+    artisticMode: " [Artistic Mode]",
+    editMode: " (edited from image)",
+    error: "❌ | Failed: {err}",
+  },
+  fr: {
+    noPrompt: "🎨 | Veuillez fournir une description.",
+    processing: "🎨 | Création de votre chef-d'œuvre...",
+    success: "🎨✨ | Chef-d'œuvre créé !{mode}",
+    artisticMode: " [Mode Artistique]",
+    editMode: " (édité depuis une image)",
+    error: "❌ | Échec : {err}",
   },
 };
 
-const CACHE_DIR = path.join(__dirname, "tmp");
+const ENDPOINTS = {
+  generate: "https://gem-tw6a.onrender.com/generate",
+  edit: "https://gem-tw6a.onrender.com/edit",
+};
 
-export const entry = defineEntry(
-  async ({ output, args, event, langParser }) => {
+const DEFAULT_RATIO = "1:1";
 
-    const t = langParser.createGetLang(langs);
+export async function entry(ctx: CommandContext) {
+  const { input, output, args, api, langParser } = ctx;
+  const getLang = langParser.createGetLang(langs);
 
-    if (!args.length) {
-      return output.reply(t("noPrompt"));
+  if (!args[0]) {
+    return output.reply(getLang("noPrompt"));
+  }
+
+  await api.setMessageReaction("🎨", input.messageID, () => {}, true);
+
+  const loading = await output.reply(getLang("processing"));
+
+  try {
+    const { prompt, ratio, unfilteredMode, isEditMode, imageBase64 } = parseArgs(args, input);
+
+    if (!prompt) {
+      await output.unsend(loading.messageID);
+      await api.setMessageReaction("❌", input.messageID, () => {}, true);
+      return output.reply(getLang("noPrompt"));
     }
 
-    if (!fs.existsSync(CACHE_DIR)) {
-      fs.mkdirSync(CACHE_DIR);
-    }
+    let endpoint: string;
+    let payload: any;
 
-    try {
-
-      let promptParts: string[] = [];
-      let ratioArg = "1:1";
-      let artisticMode = false;
-
-      for (let i = 0; i < args.length; i++) {
-
-        if (args[i] === "--r" && args[i + 1]) {
-          ratioArg = args[i + 1];
-          i++;
-        }
-
-        else if (args[i] === "--nw") {
-          artisticMode = true;
-        }
-
-        else {
-          promptParts.push(args[i]);
-        }
-      }
-
-      const userPrompt = promptParts.join(" ").trim();
-
-      if (!userPrompt) {
-        return output.reply(t("noPrompt"));
-      }
-
-      let finalPrompt = userPrompt;
-
-      if (artisticMode) {
-        finalPrompt =
-          `Sophisticated fine art photography, classical figure study, artistic lighting, gallery quality: ${userPrompt}`;
-      }
-
-      const replied =
-        event.messageReply?.attachments?.[0];
-
-      let endpoint =
-        "https://gem-tw6a.onrender.com/generate";
-
-      let payload: any = {
-        prompt: finalPrompt,
-        ratio: ratioArg,
-        format: "jpg"
+    if (isEditMode && imageBase64) {
+      endpoint = ENDPOINTS.edit;
+      payload = {
+        image: imageBase64,
+        prompt: buildPrompt(prompt, unfilteredMode),
+        format: "jpg",
       };
+    } else {
+      endpoint = ENDPOINTS.generate;
+      payload = {
+        prompt: buildPrompt(prompt, unfilteredMode),
+        ratio: ratio || DEFAULT_RATIO,
+        format: "jpg",
+      };
+    }
 
-      if (replied && replied.type === "photo") {
+    const response = await axios.post(endpoint, payload, {
+      responseType: "arraybuffer",
+      timeout: 180000,
+    });
 
-        const imgRes = await axios.get(replied.url, {
-          responseType: "arraybuffer",
-          timeout: 60000
-        });
+    const tmpDir = os.tmpdir();
+    const imgPath = path.join(tmpDir, `gem_${Date.now()}.jpg`);
+    await fs.writeFile(imgPath, Buffer.from(response.data));
 
-        const imgBase64 =
-          Buffer.from(imgRes.data, "binary")
-            .toString("base64");
+    await api.setMessageReaction("✅", input.messageID, () => {}, true);
+    await output.unsend(loading.messageID);
 
-        endpoint =
-          "https://gem-tw6a.onrender.com/edit";
+    let modeText = "";
+    if (unfilteredMode) modeText += getLang("artisticMode");
+    if (isEditMode) modeText += getLang("editMode");
 
-        payload.image = imgBase64;
+    const successBody = getLang("success").replace("{mode}", modeText);
 
-        delete payload.ratio;
-      }
+    await output.reply({
+      body: successBody,
+      attachment: fs.createReadStream(imgPath),
+    } as any);
 
-      const loading =
-        await output.reply(
-          "🎨 | Generating masterpiece..."
-        );
+    await fs.remove(imgPath).catch(() => {});
 
-      const res = await axios.post(
-        endpoint,
-        payload,
-        {
-          responseType: "arraybuffer",
-          timeout: 180000,
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "*/*",
-            "User-Agent": "Mozilla/5.0"
-          }
-        }
-      );
+  } catch (error: any) {
+    await api.setMessageReaction("❌", input.messageID, () => {}, true);
+    await output.unsend(loading.messageID).catch(() => {});
+    console.error("[Gem] Error:", error);
+    output.reply(getLang("error").replace("{err}", error.message || String(error)));
+  }
+}
 
-      const filePath = path.join(
-        CACHE_DIR,
-        `gem_${Date.now()}.jpg`
-      );
+function parseArgs(args: string[], input: CommandContext["input"]): {
+  prompt: string;
+  ratio: string | null;
+  unfilteredMode: boolean;
+  isEditMode: boolean;
+  imageBase64: string | null;
+} {
+  let promptParts: string[] = [];
+  let ratio: string | null = null;
+  let unfilteredMode = false;
+  let isEditMode = false;
+  let imageBase64: string | null = null;
 
-      fs.writeFileSync(filePath, res.data);
-
-      await output.reply({
-        body:
-          `${UNISpectra.charm} 🎨✨ Masterpiece created!` +
-          `${artisticMode ? " [Artistic Mode]" : ""}` +
-          `${replied ? "\n🖌️ Edit Mode Enabled" : ""}` +
-          `${ratioArg ? `\n📐 Ratio: ${ratioArg}` : ""}`,
-        attachment: fs.createReadStream(filePath)
-      });
-
-      if (loading?.messageID) {
-        output.unsend(loading.messageID);
-      }
-
-      setTimeout(() => {
-        try {
-          if (fs.existsSync(filePath)) {
-            fs.unlinkSync(filePath);
-          }
-        } catch {}
-      }, 15000);
-
-    } catch (error: any) {
-
-      console.error("GEM ERROR:", error);
-
-      output.reply(
-        `${t("fail")}\n${error.message || "Unknown error"}`
-      );
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--r" && i + 1 < args.length) {
+      ratio = args[i + 1];
+      i++;
+    } else if (args[i] === "--nw") {
+      unfilteredMode = true;
+    } else {
+      promptParts.push(args[i]);
     }
   }
-);
+
+  const prompt = promptParts.join(" ");
+
+  if (input.messageReply?.attachments?.[0]?.type === "photo") {
+    isEditMode = true;
+    const imgUrl = input.messageReply.attachments[0].url;
+    try {
+      const imgRes = await axios.get(imgUrl, { responseType: "arraybuffer" });
+      imageBase64 = Buffer.from(imgRes.data, "binary").toString("base64");
+    } catch (err) {
+      console.error("[Gem] Failed to fetch image:", err);
+    }
+  }
+
+  return { prompt, ratio, unfilteredMode, isEditMode, imageBase64 };
+}
+
+function buildPrompt(prompt: string, unfilteredMode: boolean): string {
+  if (unfilteredMode) {
+    return `Sophisticated fine art photography, classical figure study, artistic lighting, gallery quality: ${prompt}`;
+  }
+  return prompt;
+                                  }
