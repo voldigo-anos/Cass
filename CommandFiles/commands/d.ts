@@ -1,94 +1,286 @@
-import { getFbVideoInfo } from "fb-downloader-scrapper";
+import axios from "axios";
+import http from "http";
+import https from "https";
+import { defineEntry } from "@cass/define";
+import { UNISpectra } from "@cassidy/unispectra";
 
 export const meta: CommandMeta = {
-  name: "autodl",
+  name: "alldl",
   description:
-    "Autodownloader for Facebook videos. Automatically detects and downloads media from Facebook URLs. Upcoming support: Spotify, YouTube, YouTube Music, Twitter, and Instagram.",
-  version: "2.0.0",
-  author: "0xVoid, Kayelee",
-  requirement: "2.5.0",
-  icon: "📥",
+    "Fast video downloader for Facebook, TikTok, Instagram and YouTube",
+  author: "Christus dev AI",
+  version: "1.0.0",
+  usage: "{prefix}alldl <url>",
   category: "Media",
-  role: 1,
-  noWeb: true,
+  role: 0,
+  waitingTime: 5,
+  icon: "📥",
+  noLevelUI: true,
 };
 
 export const style: CommandStyle = {
-  title: "📥 Facebook Downloader",
+  title: "AllDL • Media Downloader 📥",
   titleFont: "bold",
   contentFont: "fancy",
 };
 
-function formatDuration(durationMs: number) {
-  const units = [
-    { unit: "hr", factor: 3600000 },
-    { unit: "min", factor: 60000 },
-    { unit: "sec", factor: 1000 },
-    { unit: "ms", factor: 1 },
-  ];
-  for (const { unit, factor } of units) {
-    if (durationMs >= factor) {
-      const value = durationMs / factor;
-      return `${value % 1 === 0 ? value.toFixed(0) : value.toFixed(1)} ${unit}`;
+export const langs = {
+  en: {
+    noURL:
+      "❌ No URL found!\nExample: {prefix}alldl <url>\nOr reply to a supported video.",
+
+    invalid:
+      "❌ Unsupported URL!",
+
+    downloading:
+      "📥 Downloading video...\nPlease wait...",
+
+    success:
+      "✅ Download completed successfully!",
+
+    failed:
+      "❌ Failed to download video.",
+  },
+};
+
+const supportedDomains = [
+  "facebook",
+  "fb.watch",
+  "tiktok",
+  "instagram",
+  "youtu",
+  "youtube",
+];
+
+function extractURL(text: string) {
+
+  if (!text) {
+    return null;
+  }
+
+  const match =
+    text.match(/(https?:\/\/[^\s]+)/g);
+
+  return match?.[0] || null;
+}
+
+async function downloadVideo(
+  url: string,
+  output: CommandContext["output"],
+) {
+
+  const apiURL =
+    `https://azadx69x-alldl-cdi-bai.vercel.app/alldl?url=${encodeURIComponent(url)}&quality=sd`;
+
+  const response =
+    await axios.get(apiURL, {
+      responseType: "stream",
+      timeout: 60000,
+      maxContentLength:
+        50 * 1024 * 1024,
+      maxBodyLength:
+        50 * 1024 * 1024,
+      decompress: true,
+
+      headers: {
+        Accept: "*/*",
+        Connection: "keep-alive",
+        "User-Agent":
+          "Mozilla/5.0",
+      },
+
+      httpAgent:
+        new http.Agent({
+          keepAlive: true,
+        }),
+
+      httpsAgent:
+        new https.Agent({
+          keepAlive: true,
+        }),
+    });
+
+  if (!response.data) {
+    throw new Error(
+      "Empty response"
+    );
+  }
+
+  return output.replyStyled(
+    {
+      body:
+        `${UNISpectra.charm} Download Complete\n\n` +
+        `╭〔 VIDEO DOWNLOAD 〕\n` +
+        `├‣ ✅ Successfully Downloaded\n` +
+        `╰‣ 🤖 Cassidy Media System`,
+
+      attachment:
+        response.data,
+    },
+
+    style
+  );
+}
+
+export const entry = defineEntry(
+  async ({
+    args,
+    output,
+    input,
+    langParser,
+  }) => {
+
+    const getLang =
+      langParser.createGetLang(langs);
+
+    let url: string | null =
+      null;
+
+    const replied =
+      input.replier;
+
+    if (replied) {
+
+      const replyBody =
+        replied.body || "";
+
+      const replyAttachments =
+        replied.attachments || [];
+
+      url =
+        extractURL(replyBody);
+
+      if (
+        !url &&
+        replyAttachments.length > 0
+      ) {
+
+        const att =
+          replyAttachments[0];
+
+        if (
+          att.type === "video" ||
+          att.type === "share"
+        ) {
+
+          url =
+            att.url ||
+            att.source ||
+            att.playable_url;
+        }
+      }
+    }
+
+    if (!url && args[0]) {
+      url = args[0];
+    }
+
+    if (
+      !url &&
+      input.body
+    ) {
+
+      url =
+        extractURL(input.body);
+    }
+
+    if (!url) {
+
+      output.react("❌");
+
+      return output.reply(
+        getLang("noURL")
+      );
+    }
+
+    const isValid =
+      supportedDomains.some(
+        (domain) =>
+          url!.includes(domain)
+      );
+
+    if (!isValid) {
+
+      output.react("❌");
+
+      return output.reply(
+        getLang("invalid")
+      );
+    }
+
+    try {
+
+      output.react("📥");
+
+      await downloadVideo(
+        url,
+        output
+      );
+
+      output.react("✅");
+
+    } catch (err: any) {
+
+      console.error(
+        "[AllDL Error]",
+        err?.message || err
+      );
+
+      output.react("❌");
+
+      return output.reply(
+        `${getLang("failed")}\n\n📝 ${
+          err?.message || "Unknown error"
+        }`
+      );
     }
   }
-  return "0 ms";
-}
+);
 
-export async function entry({
-  output,
+export async function event({
   input,
-  threadsDB,
-  args,
+  output,
 }: CommandContext) {
-  if (!input.isAdmin) {
-    return output.reply("You cannot enable/disable this feature.");
-  }
-  const isEna = (await threadsDB.queryItem(input.threadID, "autodl"))?.autodl;
-  let choice =
-    args[0] === "on" ? true : args[0] === "off" ? false : isEna ? !isEna : true;
-  await threadsDB.setItem(input.threadID, {
-    autodl: choice,
-  });
 
-  return output.reply(`✅ ${choice ? "Enabled" : "Disabled"} successfully!`);
-}
-
-export async function event({ output, input, threadsDB }: CommandContext) {
   try {
-    const cache = await threadsDB.getCache(input.threadID);
-    if (cache.autodl === false) {
+
+    if (!input.body) {
       return;
     }
-    const prompt = String(input);
-    if (
-      prompt.match(/^https:\/\/(www\.)?(facebook\.com|fb\.watch)/)?.length > 0
-    ) {
-      output.react("🔎");
-      const data = await getFbVideoInfo(prompt);
-      let Title = data.title;
-      const emojiMatch = Title.match(/&#x([0-9a-fA-F\-]+);?/);
-      if (emojiMatch) {
-        const hexStr = emojiMatch[1].toUpperCase();
-        const codePoints = hexStr.split("-").map((part) => parseInt(part, 16));
-        const emoji = String.fromCodePoint(...codePoints);
-        Title = Title.replace(emojiMatch[0], emoji);
-      }
-      if (data.hd || data.sd) {
-        output.react("📥");
-        await output.replyStyled(
-          {
-            body: `**${Title}**\n⏱️ **${formatDuration(data.duration_ms)}**`,
-            attachment: await global.utils.getStreamFromURL(data.hd || data.sd),
-          },
-          style
-        );
-        output.reaction("✅");
-      } else {
-        output.reaction("❌");
-      }
+
+    const url =
+      extractURL(input.body);
+
+    if (!url) {
+      return;
     }
+
+    const isValid =
+      supportedDomains.some(
+        (domain) =>
+          url.includes(domain)
+      );
+
+    if (!isValid) {
+      return;
+    }
+
+    output.react("📥");
+
+    await downloadVideo(
+      url,
+      output
+    );
+
+    output.react("✅");
+
   } catch (err) {
-    output.replyStyled(require("util").inspect(err), style);
+
+    console.error(
+      "[AutoDL Event Error]",
+      err
+    );
+
+    output.react("❌");
   }
-}
+  }
