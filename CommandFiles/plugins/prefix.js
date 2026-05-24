@@ -6,7 +6,7 @@ export const meta = {
   name: "prefix",
   author: "Christus",
   version: "4.0.0",
-  description: "Nothing special.",
+  description: "Affiche le préfixe du bot.",
   supported: "^4.0.0",
   order: 4,
   type: "plugin",
@@ -14,7 +14,7 @@ export const meta = {
 };
 
 const REPLY_TEXT = (prefix, prefixes) =>
-  `🐄 𝗖𝗵𝗿𝗶𝘀𝘁𝘂𝘀𝗕𝗼𝘁 𝗧𝗲𝗰𝗵𝗻𝗼𝗹𝗼𝗴𝗶𝗲𝘀\n━━━━━━━━━━━━━━━\n⚠️ [ 𝗖𝗵𝗿𝗶𝘀𝘁𝘂𝘀'𝘀 𝗔𝗻𝗮𝗹𝘆𝘀𝗶𝘀 𝘃𝟰 ]\n\nYour signal has been detected, but no directive was issued.\n\n💡 | Use ${prefix}𝗵𝗲𝗹𝗽 to access the ChristusBot command index.\n🔗 | Recognized Prefixes: [ ${[...prefixes].join(", ")} ]\n━━━━━━━━━━━━━━━\n🐄 | 𝗖𝗵𝗿𝗶𝘀𝘁𝘂𝘀𝗕𝗼𝘁 𝗧𝗲𝗰𝗵𝗻𝗼𝗹𝗼𝗴𝗶𝗲𝘀 interface online.`;
+  `🐄 𝗖𝗵𝗿𝗶𝘀𝘁𝘂𝘀𝗕𝗼𝘁 𝗧𝗲𝗰𝗵𝗻𝗼𝗹𝗼𝗴𝗶𝗲𝘀\n🔥 𝗣𝗿𝗶𝗺𝗮𝗿𝘆 𝗣𝗿𝗲𝗳𝗶𝘅: [ ${prefix} ]  \n🔑 𝗔𝗹𝘁𝗲𝗿𝗻𝗮𝘁𝗲 𝗣𝗿𝗲𝗳𝗶𝘅𝗲𝘀: [ ${[...prefixes].slice(1).join(", ")} ]  \n━━━━━━━━━━━━━━━\n📖 𝗡𝗮𝘃𝗶𝗴𝗮𝘁𝗶𝗼𝗻  \n• ${prefix}𝗵𝗲𝗹𝗽 → ChristusBot Manual  \n• ${prefix}𝘀𝘁𝗮𝗿𝘁 → Command Directory  \n• ${prefix}𝗦𝘂𝗽𝗽𝗼𝗿𝘁 → Join the Support Group\n━━━━━━━━━━━━━━━  \n🐄 𝗖𝗵𝗿𝗶𝘀𝘁𝘂𝘀𝗕𝗼𝘁 𝗧𝗲𝗰𝗵𝗻𝗼𝗹𝗼𝗴𝗶𝗲𝘀 interface standing by. Issue a command to proceed. 🌠`;
 
 /**
  *
@@ -24,18 +24,20 @@ const REPLY_TEXT = (prefix, prefixes) =>
 export async function use(obj) {
   const { input, output, prefix, prefixes } = obj;
 
-  const wordsWithPhoto = ["prefix", "cassidy", "cassieah", "ieah", "zeah"];
-  const isPrefixWord = wordsWithPhoto.some(
+  // Mots qui déclenchent la réponse avec photo
+  const motsAvecPhoto = ["prefix", "cassidy", "cassieah", "ieah", "zeah"];
+  const estMotPrefix = motsAvecPhoto.some(
     (w) => `${w}`.toLowerCase() === input.toLowerCase()
   );
-  const isPrefixOnly = input.text.trim() === prefix;
+  const estPrefixSeul = input.text.trim() === prefix;
 
-  if (!isPrefixWord && !isPrefixOnly) {
+  // Si aucune des deux conditions, on passe au plugin suivant
+  if (!estMotPrefix && !estPrefixSeul) {
     return obj.next();
   }
 
-  // Préfixe seul (ex: taper "/") → texte simple, sans photo
-  if (isPrefixOnly && !isPrefixWord) {
+  // Préfixe seul (ex: taper "+") → texte simple, sans photo
+  if (estPrefixSeul && !estMotPrefix) {
     return output.reply(REPLY_TEXT(prefix, prefixes));
   }
 
@@ -77,7 +79,7 @@ export async function use(obj) {
     fill: "rgba(255, 255, 255, 0.7)",
   });
 
-  canv.drawText(`Prefixes:`, {
+  canv.drawText(`Préfixes:`, {
     fontType: "cbold",
     size: 50,
     x: container.left + margin,
@@ -87,7 +89,7 @@ export async function use(obj) {
     fill: "rgba(255, 255, 255, 0.7)",
   });
 
-  canv.drawText(`Uptime:`, {
+  canv.drawText(`Temps actif:`, {
     fontType: "cbold",
     size: 50,
     x: container.left + margin,
@@ -135,7 +137,7 @@ export async function use(obj) {
     fill: "white",
   });
 
-  canv.drawText(`Use "${prefix}help" to list commands.`, {
+  canv.drawText(`Utilise "${prefix}help" pour les commandes.`, {
     fontType: "cbold",
     size: 40,
     x: container.left + ymargin,
@@ -144,7 +146,7 @@ export async function use(obj) {
     align: "left",
     fill: "rgba(255, 255, 255, 0.9)",
   });
-  canv.drawText(`Try "${prefix}help search" to find commands.`, {
+  canv.drawText(`Essaie "${prefix}help search" pour chercher.`, {
     fontType: "cbold",
     size: 40,
     x: container.left + ymargin,
@@ -166,4 +168,4 @@ export async function use(obj) {
     }
   );
 }
-
+  
