@@ -1,330 +1,237 @@
 import axios from "axios";
 import fs from "fs";
 import path from "path";
-import os from "os";
-import yts from "yt-search";
 import moment from "moment-timezone";
-import { fileURLToPath } from "url";
+import yts from "yt-search";
 import { defineEntry } from "@cass/define";
 import { UNISpectra } from "@cassidy/unispectra";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-const API_BASE = "https://azadx69x.is-a.dev";
-
-interface YTVideo {
-  title: string;
-  url: string;
-  seconds: number;
-  thumbnail: string;
-  author?: {
-    name?: string;
-  };
-}
+/* ================= META ================= */
 
 export const meta: CommandMeta = {
   name: "youtube",
   otherNames: ["ytb"],
-  author: "Christus dev AI",
-  version: "2.0.0",
-  description: "Search and download YouTube video/audio",
+  author: "dipto • converted by Christus Dev AI",
+  version: "1.1.4",
+  description: "Download video, audio, and info from YouTube",
   category: "Media",
-  usage: "{prefix}{name} -v <query|url>\n{prefix}{name} -a <query|url>",
+  usage:
+    "{prefix}{name} -v <query|url>\n" +
+    "{prefix}{name} -a <query|url>\n" +
+    "{prefix}{name} -i <query|url>",
   role: 0,
   waitingTime: 5,
   icon: "📺",
   noLevelUI: true,
 };
 
+/* ================= STYLE ================= */
+
 export const style: CommandStyle = {
-  title: "Christus • YouTube Downloader 🏂",
+  title: "Christus • YouTube Downloader 🪽",
   titleFont: "bold",
   contentFont: "fancy",
 };
 
+/* ================= LANGS ================= */
+
 export const langs = {
   en: {
-    usage: "❌ Usage: -v <query|url> | -a <query|url>",
-    noQuery: "❌ Provide a search query or YouTube URL.",
-    noResults: "❌ No results found.",
-    invalidSelect: "❌ Invalid selection. Choose 1–6.",
+    usage: "❌ Usage: -v | -a | -i <query or url>",
+    noQuery: "❌ Provide a YouTube URL or search keyword.",
+    noResults: "⭕ No results found.",
+    invalidSelect: "❌ Invalid selection (1–6 only).",
     downloadFail: "❌ Failed to download media.",
+    infoFail: "❌ Failed to retrieve video info.",
   },
 };
 
-function buildList(videos: YTVideo[], type: "-v" | "-a") {
-  const time = moment().tz("UTC").format("MMMM D, YYYY h:mm A");
+/* ================= API ================= */
 
-  const list = videos
-    .map((v, i) => {
-      const quality = type === "-v" ? "HD" : "128kbps";
+const BASE_API_URL =
+  "https://raw.githubusercontent.com/Mostakim0978/D1PT0/refs/heads/main/baseApiUrl.json";
 
-      return ` • ${i + 1}. ${v.title}
-   👤 ${v.author?.name || "Unknown"}
-   🎚️ ${quality}`;
-    })
-    .join("\n\n");
-
-  return `${UNISpectra.charm} Temporal Coordinates
- • 📅 ${time}
-${UNISpectra.standardLine}
-${UNISpectra.charm} Select a media
-${list}
-${UNISpectra.standardLine}
-${UNISpectra.charm} Reply with a number (1–6)
-${UNISpectra.charm} ChristusBot 🏂`;
+async function getAPIBase(): Promise<string> {
+  const { data } = await axios.get<{ api: string }>(BASE_API_URL);
+  return data.api;
 }
 
 async function streamFromURL(url: string) {
-  const res = await axios({
-    url,
-    responseType: "stream",
-    timeout: 15000
-  });
-
+  const res = await axios({ url, responseType: "stream" });
   return res.data;
 }
 
-async function downloadMedia(
-  videoUrl: string,
-  type: "audio" | "video",
-  output: any
-) {
-  const downloadUrl =
-    `${API_BASE}/api/ytdown?url=${encodeURIComponent(videoUrl)}&type=${type}`;
-
-  const { data: dlData } = await axios.get(downloadUrl, {
-    timeout: 30000,
-    headers: {
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-    }
-  });
-
-  if (!dlData.success) {
-    throw new Error(dlData.error || "Download API failed");
-  }
-
-  const mediaItems = dlData.result?.api?.mediaItems || [];
-
-  if (!mediaItems.length) {
-    throw new Error("No media items found");
-  }
-
-  let picked = null;
-
-  if (type === "audio") {
-    picked =
-      mediaItems.find(
-        (x: any) =>
-          x.type === "Audio" &&
-          x.mediaQuality === "128K" &&
-          x.mediaExtension === "MP3"
-      ) ||
-      mediaItems.find(
-        (x: any) =>
-          x.type === "Audio" &&
-          x.mediaQuality === "128K"
-      ) ||
-      mediaItems.find((x: any) => x.type === "Audio");
-  } else {
-    picked =
-      mediaItems.find(
-        (x: any) =>
-          x.type === "Video" &&
-          x.mediaQuality === "HD"
-      ) ||
-      mediaItems.find(
-        (x: any) =>
-          x.type === "Video" &&
-          x.mediaQuality === "SD"
-      ) ||
-      mediaItems.find((x: any) => x.type === "Video");
-  }
-
-  if (!picked) {
-    throw new Error("No suitable media found");
-  }
-
-  let fileUrl = picked.mediaPreviewUrl || picked.mediaUrl;
-
-  if (!fileUrl || !fileUrl.startsWith("http")) {
-    throw new Error("Invalid media URL");
-  }
-
-  if (picked.mediaUrl?.startsWith("http")) {
-    try {
-      const workerHeaders = {
-        Accept: "application/json, text/plain, */*",
-        Referer: "https://app.ytdown.to/",
-        Origin: "https://app.ytdown.to",
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-      };
-
-      let resolvedUrl = null;
-
-      for (let i = 0; i < 10; i++) {
-        const workerRes = await axios.get(picked.mediaUrl, {
-          timeout: 20000,
-          headers: workerHeaders
-        });
-
-        const candidate = workerRes.data?.fileUrl;
-
-        if (candidate && candidate !== "Waiting...") {
-          resolvedUrl = candidate;
-          break;
-        }
-
-        await new Promise((r) => setTimeout(r, 3000));
-      }
-
-      if (resolvedUrl) {
-        fileUrl = resolvedUrl;
-      }
-    } catch {}
-  }
-
-  const ext = type === "audio" ? "mp3" : "mp4";
-
-  const tempFile = path.join(
-    os.tmpdir(),
-    `yt_${Date.now()}.${ext}`
-  );
-
-  const response = await axios({
-    url: fileUrl,
-    responseType: "stream",
-    timeout: 120000,
-    maxRedirects: 10,
-    headers: {
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-      Referer: "https://www.youtube.com/"
-    }
-  });
-
-  const writer = fs.createWriteStream(tempFile);
-
-  response.data.pipe(writer);
-
-  await new Promise<void>((resolve, reject) => {
-    writer.on("finish", resolve);
-    writer.on("error", reject);
-  });
-
-  await output.reply({
-    attachment: fs.createReadStream(tempFile)
-  });
-
-  setTimeout(() => {
-    try {
-      fs.unlinkSync(tempFile);
-    } catch {}
-  }, 15000);
-}
+/* ================= ENTRY ================= */
 
 export const entry = defineEntry(
   async ({ input, output, args, langParser }) => {
     const t = langParser.createGetLang(langs);
 
-    const mode = args[0] as "-v" | "-a";
-
+    const action = args[0] as "-v" | "-a" | "-i";
     const query = args.slice(1).join(" ");
 
-    if (!["-v", "-a"].includes(mode)) {
-      return output.reply(t("usage"));
-    }
+    if (!["-v", "-a", "-i"].includes(action)) return output.reply(t("usage"));
+    if (!query) return output.reply(t("noQuery"));
 
-    if (!query) {
-      return output.reply(t("noQuery"));
-    }
+    const apiBase = await getAPIBase();
+
+    /* ===== DIRECT URL ===== */
 
     if (query.startsWith("http")) {
       try {
-        await downloadMedia(
-          query,
-          mode === "-v" ? "video" : "audio",
-          output
-        );
-      } catch {
-        return output.reply(t("downloadFail"));
-      }
+        if (action === "-i") {
+          const { data } = await axios.get(
+            `${apiBase}/ytfullinfo?videoID=${query}`
+          );
 
+          return output.reply({
+            body:
+              `✨ Title: ${data.title}\n` +
+              `⏳ Duration: ${data.duration / 60} minutes\n` +
+              `👀 Views: ${data.view_count}\n` +
+              `👍 Likes: ${data.like_count}\n` +
+              `🌐 Channel: ${data.channel}`,
+            attachment: await streamFromURL(data.thumbnail),
+          });
+        }
+
+        const type = action === "-a" ? "mp3" : "mp4";
+        const { data } = await axios.get(
+          `${apiBase}/ytDl3?link=${query}&format=${type}&quality=3`
+        );
+
+        const filePath = path.join(
+          __dirname,
+          `yt_${Date.now()}.${type}`
+        );
+
+        const res = await axios({
+          url: data.downloadLink,
+          responseType: "stream",
+        });
+
+        const writer = fs.createWriteStream(filePath);
+        res.data.pipe(writer);
+
+        await new Promise<void>((r) => writer.on("finish", r));
+
+        await output.reply({
+          body: `• Title: ${data.title}\n• Quality: ${data.quality}`,
+          attachment: fs.createReadStream(filePath),
+        });
+
+        fs.unlinkSync(filePath);
+      } catch {
+        output.reply(t("downloadFail"));
+      }
       return;
     }
 
-    try {
-      const res = await yts(query);
+    /* ===== SEARCH ===== */
 
-      const videos = res.videos.slice(0, 6);
+    const search = await yts(query);
+    const results = search.videos.slice(0, 6);
 
-      if (!videos.length) {
-        return output.reply(t("noResults"));
-      }
+    if (!results.length) return output.reply(t("noResults"));
 
-      const thumbs = await Promise.all(
-        videos.map((v) => streamFromURL(v.thumbnail))
-      );
+    const time = moment().tz("UTC").format("MMMM D, YYYY h:mm A");
 
-      const msg = await output.reply({
-        body: buildList(videos as YTVideo[], mode),
-        attachment: thumbs,
-      });
+    const list = results
+      .map(
+        (v, i) =>
+          ` • ${i + 1}. ${v.title}\n   ⏱️ ${v.timestamp}`
+      )
+      .join("\n\n");
 
-      input.setReply(msg.messageID, {
-        key: "youtube",
-        id: input.senderID,
-        results: videos,
-        type: mode,
-      });
+    const msg = await output.reply({
+      body:
+        `${UNISpectra.charm} Temporal Coordinates\n` +
+        ` • 📅 ${time}\n` +
+        `${UNISpectra.standardLine}\n` +
+        `${list}\n` +
+        `${UNISpectra.standardLine}\n` +
+        `Reply with a number (1–6)`,
+      attachment: await Promise.all(
+        results.map((v) => streamFromURL(v.thumbnail))
+      ),
+    });
 
-    } catch {
-      output.reply(t("noResults"));
-    }
+    input.setReply(msg.messageID, {
+      key: "youtube",
+      author: input.senderID,
+      action,
+      results,
+      apiBase,
+    });
   }
 );
+
+/* ================= REPLY ================= */
 
 export async function reply({
   input,
   output,
   repObj,
-  detectID,
-  langParser,
 }: CommandContext & {
   repObj: {
-    id: string;
-    results: YTVideo[];
-    type: "-v" | "-a";
+    author: string;
+    action: "-v" | "-a" | "-i";
+    results: any[];
+    apiBase: string;
   };
 }) {
-  const t = langParser.createGetLang(langs);
-
-  if (input.senderID !== repObj.id) return;
+  if (input.senderID !== repObj.author) return;
 
   const choice = parseInt(input.body);
-
-  if (
-    isNaN(choice) ||
-    choice < 1 ||
-    choice > repObj.results.length
-  ) {
-    return output.reply(t("invalidSelect"));
+  if (isNaN(choice) || choice < 1 || choice > repObj.results.length) {
+    return output.reply("❌ Invalid selection.");
   }
 
-  const selected = repObj.results[choice - 1];
-
-  input.delReply(String(detectID));
+  const video = repObj.results[choice - 1];
 
   try {
-    await downloadMedia(
-      selected.url,
-      repObj.type === "-v" ? "video" : "audio",
-      output
+    if (repObj.action === "-i") {
+      const { data } = await axios.get(
+        `${repObj.apiBase}/ytfullinfo?videoID=${video.videoId}`
+      );
+
+      return output.reply({
+        body:
+          `✨ Title: ${data.title}\n` +
+          `⏳ Duration: ${data.duration / 60} minutes\n` +
+          `👀 Views: ${data.view_count}`,
+        attachment: await streamFromURL(data.thumbnail),
+      });
+    }
+
+    const type = repObj.action === "-a" ? "mp3" : "mp4";
+
+    const { data } = await axios.get(
+      `${repObj.apiBase}/ytDl3?link=${video.videoId}&format=${type}&quality=3`
     );
+
+    const filePath = path.join(
+      __dirname,
+      `yt_${Date.now()}.${type}`
+    );
+
+    const res = await axios({
+      url: data.downloadLink,
+      responseType: "stream",
+    });
+
+    const writer = fs.createWriteStream(filePath);
+    res.data.pipe(writer);
+
+    await new Promise<void>((r) => writer.on("finish", r));
+
+    await output.reply({
+      body: `• Title: ${data.title}\n• Quality: ${data.quality}`,
+      attachment: fs.createReadStream(filePath),
+    });
+
+    fs.unlinkSync(filePath);
   } catch {
-    output.reply(t("downloadFail"));
+    output.reply("❌ Action failed.");
   }
-}
+                    }
