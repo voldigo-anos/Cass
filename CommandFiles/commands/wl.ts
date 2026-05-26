@@ -396,7 +396,7 @@ const command = defineCommand({
       "{prefix}{name} thread <add|remove|list|on|off> [threadID]\n" +
       "{prefix}{name} status",
     category: "Owner",
-    author: "Converted from Azack (NeoKEX) by Claude",
+    author: "Christus",
     role: 2,
     noPrefix: false,
     waitingTime: 3,
