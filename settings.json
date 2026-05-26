@@ -12,7 +12,7 @@
   "GRADIENT_THEME": "retro",
   "knownURL": "https://cassidyredux.onrender.com",
   "noFB": false,
-  "PREFIX": "#",
+  "PREFIX": "&",
   "NICKNAME": "Christus",
   "CUSTOM_STYLE": {
     "enabled": false,
@@ -20,9 +20,9 @@
     "TITLE_PATTERN": "{emojis}【 {word} 】{emojis}"
   },
   "VERBOSE_LOGGING": false,
-  "LOGO": "𝗖𝗛𝗥𝗜𝗦𝗧𝗨𝗦 𝗕𝗢𝗧",
+  "LOGO": "",
   "ADMINBOT": ["61580333625022", "61568791604271"],
-  "EXTRAPREFIX": ["+"],
+  "EXTRAPREFIX": ["§","/"],
   "MODERATORBOT": [],
   "exitOnError": false,
   "WEB_PASSWORD": "wsshiagwvkljijxxsvddidbdib+_*77s",
