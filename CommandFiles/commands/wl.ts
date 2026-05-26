@@ -1,819 +1,418 @@
-import { writeFileSync } from "fs-extra";
-
 import {
   SpectralCMDHome,
   Config,
-} from "@cass-modules/spectralCMDHome";
+} from "../modules/spectralCMDHome";
+import { UNIRedux, UNISpectra } from "@cassidy/unispectra";
+import { defineEntry, defineCommand } from "@cass/define";
 
-import {
-  UNIRedux,
-  UNISpectra,
-} from "@cassidy/unispectra";
+// ─── Types ────────────────────────────────────────────────────────────────────
 
-import {
-  defineCommand,
-  defineHome,
-} from "@cass/define";
-
-const style: CommandStyle = {
-  title: "Whitelist 👑",
-  titleFont: "bold",
-  contentFont: "fancy",
-};
-
-function initializeConfig() {
-
-  if (
-    !global.Cassidy.config
-      .whiteListMode
-  ) {
-
-    global.Cassidy.config
-      .whiteListMode = {
-      enable: false,
-      whiteListIds: [],
-    };
-  }
-
-  if (
-    !global.Cassidy.config
-      .whiteListMode
-      .whiteListIds
-  ) {
-
-    global.Cassidy.config
-      .whiteListMode
-      .whiteListIds = [];
-  }
-
-  if (
-    !global.Cassidy.config
-      .whiteListModeThread
-  ) {
-
-    global.Cassidy.config
-      .whiteListModeThread = {
-      enable: false,
-      whiteListThreadIds: [],
-    };
-  }
-
-  if (
-    !global.Cassidy.config
-      .whiteListModeThread
-      .whiteListThreadIds
-  ) {
-
-    global.Cassidy.config
-      .whiteListModeThread
-      .whiteListThreadIds = [];
-  }
+interface WhitelistConfig {
+  userWhitelist: { enabled: boolean; ids: string[] };
+  threadWhitelist: { enabled: boolean; ids: string[] };
 }
 
-function saveConfig() {
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-  try {
-
-    const configPath =
-      process.cwd() +
-      "/settings.json";
-
-    writeFileSync(
-      configPath,
-
-      JSON.stringify(
-        global.Cassidy.config,
-        null,
-        2
-      )
-    );
-
-  } catch (err) {
-
-    console.error(
-      "Whitelist Save Error:",
-      err
-    );
+function getWLConfig(): WhitelistConfig {
+  const cfg = global.Cassidy.config as any;
+  if (!cfg.whitelistConfig) {
+    cfg.whitelistConfig = {
+      userWhitelist: { enabled: false, ids: [] },
+      threadWhitelist: { enabled: false, ids: [] },
+    };
   }
+  cfg.whitelistConfig.userWhitelist ??= { enabled: false, ids: [] };
+  cfg.whitelistConfig.threadWhitelist ??= { enabled: false, ids: [] };
+  return cfg.whitelistConfig as WhitelistConfig;
 }
+
+function saveWLConfig(data: WhitelistConfig): void {
+  (global.Cassidy.config as any).whitelistConfig = data;
+}
+
+// ─── Configs ──────────────────────────────────────────────────────────────────
 
 const configs: Config[] = [
 
+  // ── user ──────────────────────────────────────────────────────────────────
   {
-    key: "useradd",
+    key: "user",
+    description: "Manage the user whitelist (add/remove/list/on/off)",
+    args: ["<add|remove|list|on|off>", "[uid | @mention | reply]"],
+    aliases: ["u"],
+    icon: "👤",
+    isAdmin: true,
+    async handler({ input, output, money }, { spectralArgs, key }) {
+      const action = spectralArgs[0]?.toLowerCase();
 
-    description:
-      "Add users to whitelist",
-
-    aliases: [
-      "uadd",
-      "ua",
-    ],
-
-    args: ["<uid>"],
-
-    icon: "➕",
-
-    async handler(
-      {
-        input,
-        output,
-        money,
-      },
-
-      {
-        spectralArgs,
-      }
-    ) {
-
-      initializeConfig();
-
-      if (!input.isAdmin) {
-
-        return output.replyStyled(
-          {
-            body:
-              `${UNIRedux.arrow} ❌ Permission Denied\n\n` +
-              `Only admins can manage whitelist.`,
-          },
-
-          style
-        );
-      }
-
-      let uids: string[] = [];
-
-      if (input.detectID) {
-
-        uids.push(
-          input.detectID
-        );
-
-      } else {
-
-        uids =
-          spectralArgs.filter(
-            (i) =>
-              !isNaN(
-                Number(i)
-              )
-          );
-      }
-
-      if (!uids.length) {
-
-        return output.replyStyled(
-          {
-            body:
-              `${UNIRedux.arrow} ⚠️ Missing User ID\n\n` +
-              `Reply, mention, or provide a valid UID.`,
-          },
-
-          style
-        );
-      }
-
-      const added: string[] = [];
-      const already: string[] = [];
-
-      for (const uid of uids) {
-
-        if (
-          global.Cassidy.config
-            .whiteListMode
-            .whiteListIds
-            .includes(uid)
-        ) {
-
-          already.push(uid);
-
+      // user add
+      if (action === "add" || action === "-a") {
+        const wl = getWLConfig();
+        let ids: string[] = [];
+        if (input.detectID) {
+          ids = [input.detectID];
         } else {
-
-          global.Cassidy.config
-            .whiteListMode
-            .whiteListIds
-            .push(uid);
-
-          added.push(uid);
+          ids = spectralArgs.slice(1).filter((a) => /^\d+$/.test(a.trim()));
         }
-      }
-
-      saveConfig();
-
-      let body =
-        `${UNISpectra.charm} User Whitelist\n\n`;
-
-      if (added.length) {
-
-        body +=
-          `✅ Added (${added.length})\n`;
-
-        for (const uid of added) {
-
-          const data =
-            await money.getItem(uid);
-
-          body +=
-            `• ${data.name} (${uid})\n`;
-        }
-      }
-
-      if (already.length) {
-
-        body +=
-          `\n⚠️ Already Whitelisted (${already.length})\n`;
-
-        for (const uid of already) {
-
-          const data =
-            await money.getItem(uid);
-
-          body +=
-            `• ${data.name} (${uid})\n`;
-        }
-      }
-
-      return output.replyStyled(
-        {
-          body,
-        },
-
-        style
-      );
-    },
-  },
-
-  {
-    key: "userremove",
-
-    description:
-      "Remove users from whitelist",
-
-    aliases: [
-      "uremove",
-      "ur",
-    ],
-
-    args: ["<uid>"],
-
-    icon: "➖",
-
-    async handler(
-      {
-        input,
-        output,
-        money,
-      },
-
-      {
-        spectralArgs,
-      }
-    ) {
-
-      initializeConfig();
-
-      if (!input.isAdmin) {
-
-        return output.replyStyled(
-          {
-            body:
-              `${UNIRedux.arrow} ❌ Permission Denied\n\n` +
-              `Only admins can manage whitelist.`,
-          },
-
-          style
-        );
-      }
-
-      let uids: string[] = [];
-
-      if (input.detectID) {
-
-        uids.push(
-          input.detectID
-        );
-
-      } else {
-
-        uids =
-          spectralArgs.filter(
-            (i) =>
-              !isNaN(
-                Number(i)
-              )
+        if (ids.length === 0) {
+          return output.replyStyled(
+            {
+              body:
+                `${UNIRedux.arrow} **${key} add** ⚠️\n\n` +
+                `Please provide a user ID, mention someone, or reply to a message.\n` +
+                `Example: \`wl user add 123456789\``,
+            },
+            style
           );
+        }
+        const added: string[] = [];
+        const alreadyIn: string[] = [];
+        for (const id of ids) {
+          wl.userWhitelist.ids.includes(id)
+            ? alreadyIn.push(id)
+            : (wl.userWhitelist.ids.push(id), added.push(id));
+        }
+        saveWLConfig(wl);
+        const getName = async (id: string) => {
+          try { return (await money.getItem(id))?.name || "Unknown"; }
+          catch { return "Unknown"; }
+        };
+        let body = `${UNIRedux.charm} **${key} add**\n\n`;
+        if (added.length > 0) {
+          const lines = await Promise.all(added.map(async (id) => `  • **${await getName(id)}** (${id})`));
+          body += `✅ Added ${added.length} user(s):\n${lines.join("\n")}\n`;
+        }
+        if (alreadyIn.length > 0) {
+          const lines = await Promise.all(alreadyIn.map(async (id) => `  • **${await getName(id)}** (${id})`));
+          body += `\n⚠️ Already whitelisted (${alreadyIn.length}):\n${lines.join("\n")}`;
+        }
+        return output.replyStyled({ body }, style);
       }
 
-      if (!uids.length) {
-
-        return output.replyStyled(
-          {
-            body:
-              `${UNIRedux.arrow} ⚠️ Missing User ID`,
-          },
-
-          style
-        );
-      }
-
-      const removed: string[] = [];
-      const missing: string[] = [];
-
-      for (const uid of uids) {
-
-        const index =
-          global.Cassidy.config
-            .whiteListMode
-            .whiteListIds
-            .indexOf(uid);
-
-        if (index !== -1) {
-
-          global.Cassidy.config
-            .whiteListMode
-            .whiteListIds
-            .splice(index, 1);
-
-          removed.push(uid);
-
+      // user remove
+      if (action === "remove" || action === "-r" || action === "delete" || action === "-d") {
+        const wl = getWLConfig();
+        let ids: string[] = [];
+        if (input.detectID) {
+          ids = [input.detectID];
         } else {
-
-          missing.push(uid);
+          ids = spectralArgs.slice(1).filter((a) => /^\d+$/.test(a.trim()));
         }
-      }
-
-      saveConfig();
-
-      let body =
-        `${UNISpectra.charm} User Whitelist\n\n`;
-
-      if (removed.length) {
-
-        body +=
-          `✅ Removed (${removed.length})\n`;
-
-        for (const uid of removed) {
-
-          const data =
-            await money.getItem(uid);
-
-          body +=
-            `• ${data.name} (${uid})\n`;
+        if (ids.length === 0) {
+          return output.replyStyled(
+            { body: `${UNIRedux.arrow} **${key} remove** ⚠️\n\nPlease provide a user ID, mention someone, or reply to a message.` },
+            style
+          );
         }
-      }
-
-      if (missing.length) {
-
-        body +=
-          `\n⚠️ Not Found (${missing.length})\n`;
-
-        for (const uid of missing) {
-
-          const data =
-            await money.getItem(uid);
-
-          body +=
-            `• ${data.name} (${uid})\n`;
+        const removed: string[] = [];
+        const notFound: string[] = [];
+        for (const id of ids) {
+          const idx = wl.userWhitelist.ids.indexOf(id);
+          idx !== -1
+            ? (wl.userWhitelist.ids.splice(idx, 1), removed.push(id))
+            : notFound.push(id);
         }
+        saveWLConfig(wl);
+        const getName = async (id: string) => {
+          try { return (await money.getItem(id))?.name || "Unknown"; }
+          catch { return "Unknown"; }
+        };
+        let body = `${UNIRedux.charm} **${key} remove**\n\n`;
+        if (removed.length > 0) {
+          const lines = await Promise.all(removed.map(async (id) => `  • **${await getName(id)}** (${id})`));
+          body += `✅ Removed ${removed.length} user(s):\n${lines.join("\n")}\n`;
+        }
+        if (notFound.length > 0) {
+          const lines = await Promise.all(notFound.map(async (id) => `  • **${await getName(id)}** (${id})`));
+          body += `\n⚠️ Not in whitelist (${notFound.length}):\n${lines.join("\n")}`;
+        }
+        return output.replyStyled({ body }, style);
       }
 
-      return output.replyStyled(
-        {
-          body,
-        },
-
-        style
-      );
-    },
-  },
-
-  {
-    key: "userlist",
-
-    description:
-      "View whitelisted users",
-
-    aliases: [
-      "ulist",
-      "ul",
-    ],
-
-    icon: "📋",
-
-    async handler(
-      {
-        output,
-        money,
-      }
-    ) {
-
-      initializeConfig();
-
-      const list =
-        global.Cassidy.config
-          .whiteListMode
-          .whiteListIds;
-
-      if (!list.length) {
-
+      // user list
+      if (action === "list" || action === "-l") {
+        const wl = getWLConfig();
+        const ids = wl.userWhitelist.ids;
+        if (ids.length === 0) {
+          return output.replyStyled(
+            { body: `${UNIRedux.charm} **${key} list** 📋\n\nNo users are currently whitelisted.` },
+            style
+          );
+        }
+        const lines = await Promise.all(
+          ids.map(async (id, i) => {
+            try { return `${i + 1}. **${(await money.getItem(id))?.name || "Unknown"}** (${id})`; }
+            catch { return `${i + 1}. Unknown (${id})`; }
+          })
+        );
         return output.replyStyled(
           {
             body:
-              `${UNIRedux.arrow} 📋 Empty List\n\n` +
-              `No users are whitelisted.`,
+              `${UNIRedux.charm} **${key} list** 📋 (${ids.length} total)\n\n` +
+              ` ┌─────────────┐\n` +
+              lines.map((l) => ` │ ${l}`).join("\n") +
+              `\n └─────────────┘`,
           },
-
           style
         );
       }
 
-      let body =
-        `${UNISpectra.charm} Whitelisted Users (${list.length})\n\n`;
-
-      let n = 1;
-
-      for (const uid of list) {
-
-        const data =
-          await money.getItem(uid);
-
-        body +=
-          `${n}. ${data.name}\n` +
-          `(${uid})\n\n`;
-
-        n++;
-      }
-
-      return output.replyStyled(
-        {
-          body,
-        },
-
-        style
-      );
-    },
-  },
-
-  {
-    key: "useron",
-
-    description:
-      "Enable user whitelist mode",
-
-    aliases: [
-      "uon",
-    ],
-
-    icon: "✅",
-
-    async handler({
-      input,
-      output,
-    }) {
-
-      initializeConfig();
-
-      if (!input.isAdmin) {
-
+      // user on
+      if (action === "on" || action === "enable") {
+        const wl = getWLConfig();
+        wl.userWhitelist.enabled = true;
+        saveWLConfig(wl);
         return output.replyStyled(
           {
             body:
-              `${UNIRedux.arrow} ❌ Permission Denied`,
+              `${UNIRedux.charm} **${key} on** ✅\n\n` +
+              `User whitelist mode is now **ENABLED**.\n` +
+              `${UNISpectra.arrowFromT} Only whitelisted users can use the bot.`,
           },
-
           style
         );
       }
 
-      global.Cassidy.config
-        .whiteListMode
-        .enable = true;
+      // user off
+      if (action === "off" || action === "disable") {
+        const wl = getWLConfig();
+        wl.userWhitelist.enabled = false;
+        saveWLConfig(wl);
+        return output.replyStyled(
+          {
+            body:
+              `${UNIRedux.charm} **${key} off** ✅\n\n` +
+              `User whitelist mode is now **DISABLED**.\n` +
+              `${UNISpectra.arrowFromT} All users can now use the bot.`,
+          },
+          style
+        );
+      }
 
-      saveConfig();
-
+      // fallback
       return output.replyStyled(
         {
           body:
-            `${UNISpectra.charm} User whitelist mode enabled.`,
+            `${UNIRedux.arrow} **${key}** ⚠️\n\n` +
+            `Unknown action: **${action || "(none)"}**\n\n` +
+            `Available: \`add\` · \`remove\` · \`list\` · \`on\` · \`off\``,
         },
-
         style
       );
     },
   },
 
+  // ── thread ────────────────────────────────────────────────────────────────
   {
-    key: "useroff",
+    key: "thread",
+    description: "Manage the thread whitelist (add/remove/list/on/off)",
+    args: ["<add|remove|list|on|off>", "[threadID?]"],
+    aliases: ["t", "group", "g"],
+    icon: "💬",
+    isAdmin: true,
+    async handler({ input, output, threadsDB }, { spectralArgs, key }) {
+      const action = spectralArgs[0]?.toLowerCase();
 
-    description:
-      "Disable user whitelist mode",
-
-    aliases: [
-      "uoff",
-    ],
-
-    icon: "❌",
-
-    async handler({
-      input,
-      output,
-    }) {
-
-      initializeConfig();
-
-      if (!input.isAdmin) {
-
+      // thread add
+      if (action === "add" || action === "-a") {
+        const wl = getWLConfig();
+        const rawID = spectralArgs[1]?.trim() || (input as any).threadID;
+        if (!rawID || !/^\d+$/.test(rawID)) {
+          return output.replyStyled(
+            { body: `${UNIRedux.arrow} **${key} add** ⚠️\n\nPlease provide a valid thread ID, or run in the target thread without arguments.` },
+            style
+          );
+        }
+        if (wl.threadWhitelist.ids.includes(rawID)) {
+          return output.replyStyled(
+            { body: `${UNIRedux.arrow} **${key} add** ⚠️\n\nThread \`${rawID}\` is already in the whitelist.` },
+            style
+          );
+        }
+        let threadName = "Unknown Thread";
+        try {
+          const info = await threadsDB.getItem(rawID);
+          threadName = (info as any)?.threadName || threadName;
+        } catch {}
+        wl.threadWhitelist.ids.push(rawID);
+        saveWLConfig(wl);
         return output.replyStyled(
-          {
-            body:
-              `${UNIRedux.arrow} ❌ Permission Denied`,
-          },
-
+          { body: `${UNIRedux.charm} **${key} add** ✅\n\nAdded thread to whitelist:\n  • **${threadName}** (${rawID})` },
           style
         );
       }
 
-      global.Cassidy.config
-        .whiteListMode
-        .enable = false;
+      // thread remove
+      if (action === "remove" || action === "-r" || action === "delete" || action === "-d") {
+        const wl = getWLConfig();
+        const rawID = spectralArgs[1]?.trim() || (input as any).threadID;
+        if (!rawID || !/^\d+$/.test(rawID)) {
+          return output.replyStyled(
+            { body: `${UNIRedux.arrow} **${key} remove** ⚠️\n\nPlease provide a valid thread ID.` },
+            style
+          );
+        }
+        const idx = wl.threadWhitelist.ids.indexOf(rawID);
+        if (idx === -1) {
+          return output.replyStyled(
+            { body: `${UNIRedux.arrow} **${key} remove** ⚠️\n\nThread \`${rawID}\` is not in the whitelist.` },
+            style
+          );
+        }
+        wl.threadWhitelist.ids.splice(idx, 1);
+        saveWLConfig(wl);
+        return output.replyStyled(
+          { body: `${UNIRedux.charm} **${key} remove** ✅\n\nRemoved thread from whitelist:\n  • \`${rawID}\`` },
+          style
+        );
+      }
 
-      saveConfig();
+      // thread list
+      if (action === "list" || action === "-l") {
+        const wl = getWLConfig();
+        const ids = wl.threadWhitelist.ids;
+        if (ids.length === 0) {
+          return output.replyStyled(
+            { body: `${UNIRedux.charm} **${key} list** 📋\n\nNo threads are currently whitelisted.` },
+            style
+          );
+        }
+        const lines = await Promise.all(
+          ids.map(async (id, i) => {
+            let name = "Unknown Thread";
+            try { name = (await threadsDB.getItem(id) as any)?.threadName || name; } catch {}
+            return `${i + 1}. **${name}** (${id})`;
+          })
+        );
+        return output.replyStyled(
+          {
+            body:
+              `${UNIRedux.charm} **${key} list** 📋 (${ids.length} total)\n\n` +
+              ` ┌─────────────┐\n` +
+              lines.map((l) => ` │ ${l}`).join("\n") +
+              `\n └─────────────┘`,
+          },
+          style
+        );
+      }
 
+      // thread on
+      if (action === "on" || action === "enable") {
+        const wl = getWLConfig();
+        wl.threadWhitelist.enabled = true;
+        saveWLConfig(wl);
+        return output.replyStyled(
+          {
+            body:
+              `${UNIRedux.charm} **${key} on** ✅\n\n` +
+              `Thread whitelist mode is now **ENABLED**.\n` +
+              `${UNISpectra.arrowFromT} The bot will only respond in whitelisted threads.`,
+          },
+          style
+        );
+      }
+
+      // thread off
+      if (action === "off" || action === "disable") {
+        const wl = getWLConfig();
+        wl.threadWhitelist.enabled = false;
+        saveWLConfig(wl);
+        return output.replyStyled(
+          {
+            body:
+              `${UNIRedux.charm} **${key} off** ✅\n\n` +
+              `Thread whitelist mode is now **DISABLED**.\n` +
+              `${UNISpectra.arrowFromT} The bot will respond in all threads.`,
+          },
+          style
+        );
+      }
+
+      // fallback
       return output.replyStyled(
         {
           body:
-            `${UNISpectra.charm} User whitelist mode disabled.`,
+            `${UNIRedux.arrow} **${key}** ⚠️\n\n` +
+            `Unknown action: **${action || "(none)"}**\n\n` +
+            `Available: \`add\` · \`remove\` · \`list\` · \`on\` · \`off\``,
         },
-
         style
       );
     },
   },
 
-  {
-    key: "threadadd",
-
-    description:
-      "Add thread to whitelist",
-
-    aliases: [
-      "tadd",
-      "ta",
-    ],
-
-    icon: "➕",
-
-    args: ["<threadID>"],
-
-    async handler(
-      {
-        input,
-        output,
-      },
-
-      {
-        spectralArgs,
-      }
-    ) {
-
-      initializeConfig();
-
-      if (!input.isAdmin) {
-
-        return output.replyStyled(
-          {
-            body:
-              `${UNIRedux.arrow} ❌ Permission Denied`,
-          },
-
-          style
-        );
-      }
-
-      const threadID =
-        spectralArgs[0] ||
-        input.threadID;
-
-      if (
-        global.Cassidy.config
-          .whiteListModeThread
-          .whiteListThreadIds
-          .includes(threadID)
-      ) {
-
-        return output.replyStyled(
-          {
-            body:
-              `${UNIRedux.arrow} ⚠️ Thread already whitelisted.`,
-          },
-
-          style
-        );
-      }
-
-      global.Cassidy.config
-        .whiteListModeThread
-        .whiteListThreadIds
-        .push(threadID);
-
-      saveConfig();
-
-      return output.replyStyled(
-        {
-          body:
-            `${UNISpectra.charm} Added thread (${threadID}) to whitelist.`,
-        },
-
-        style
-      );
-    },
-  },
-
-  {
-    key: "threadremove",
-
-    description:
-      "Remove thread from whitelist",
-
-    aliases: [
-      "tremove",
-      "tr",
-    ],
-
-    icon: "➖",
-
-    args: ["<threadID>"],
-
-    async handler(
-      {
-        input,
-        output,
-      },
-
-      {
-        spectralArgs,
-      }
-    ) {
-
-      initializeConfig();
-
-      if (!input.isAdmin) {
-
-        return output.replyStyled(
-          {
-            body:
-              `${UNIRedux.arrow} ❌ Permission Denied`,
-          },
-
-          style
-        );
-      }
-
-      const threadID =
-        spectralArgs[0] ||
-        input.threadID;
-
-      const index =
-        global.Cassidy.config
-          .whiteListModeThread
-          .whiteListThreadIds
-          .indexOf(threadID);
-
-      if (index === -1) {
-
-        return output.replyStyled(
-          {
-            body:
-              `${UNIRedux.arrow} ⚠️ Thread not found.`,
-          },
-
-          style
-        );
-      }
-
-      global.Cassidy.config
-        .whiteListModeThread
-        .whiteListThreadIds
-        .splice(index, 1);
-
-      saveConfig();
-
-      return output.replyStyled(
-        {
-          body:
-            `${UNISpectra.charm} Removed thread (${threadID}) from whitelist.`,
-        },
-
-        style
-      );
-    },
-  },
-
+  // ── status ────────────────────────────────────────────────────────────────
   {
     key: "status",
-
-    description:
-      "View whitelist status",
-
-    aliases: [
-      "info",
-    ],
-
+    description: "View whitelist status for users and threads",
+    args: [],
+    aliases: ["info", "s"],
     icon: "📊",
-
-    async handler({
-      output,
-    }) {
-
-      initializeConfig();
-
-      const userWL =
-        global.Cassidy.config
-          .whiteListMode;
-
-      const threadWL =
-        global.Cassidy.config
-          .whiteListModeThread;
-
-      const body =
-        `${UNISpectra.charm} WHITELIST STATUS\n\n` +
-
-        `👤 User Whitelist: ${
-          userWL.enable
-            ? "ON"
-            : "OFF"
-        }\n` +
-
-        `• Total Users: ${
-          userWL
-            .whiteListIds
-            .length
-        }\n\n` +
-
-        `💬 Thread Whitelist: ${
-          threadWL.enable
-            ? "ON"
-            : "OFF"
-        }\n` +
-
-        `• Total Threads: ${
-          threadWL
-            .whiteListThreadIds
-            .length
-        }`;
-
+    async handler({ output }, { key }) {
+      const wl = getWLConfig();
+      const userStatus = wl.userWhitelist.enabled ? "🟢 ON" : "🔴 OFF";
+      const threadStatus = wl.threadWhitelist.enabled ? "🟢 ON" : "🔴 OFF";
       return output.replyStyled(
         {
-          body,
+          body:
+            `${UNIRedux.charm} **${key}** 📊\n\n` +
+            `${UNISpectra.arrow} 👤 ***User Whitelist***: ${userStatus}\n` +
+            `${UNISpectra.arrowFromT} Total users: **${wl.userWhitelist.ids.length}**\n\n` +
+            `${UNISpectra.arrow} 💬 ***Thread Whitelist***: ${threadStatus}\n` +
+            `${UNISpectra.arrowFromT} Total threads: **${wl.threadWhitelist.ids.length}**\n\n` +
+            `${UNISpectra.arrow} Use \`wl user list\` or \`wl thread list\` to see the full lists.`,
         },
-
         style
       );
     },
   },
 ];
 
-const home =
-  new SpectralCMDHome(
-    {
-      isHypen: false,
-    },
+// ─── Home ──────────────────────────────────────────────────────────────────────
 
-    configs
-  );
+const home = new SpectralCMDHome(
+  {
+    argIndex: 0,
+    isHypen: false,
+    globalCooldown: 3,
+    errorHandler: (error, ctx) => ctx.output.error(error),
+    defaultCategory: "Owner",
+  },
+  configs
+);
 
-const command =
-  defineCommand({
-    meta: {
-      name: "whitelist",
+// ─── Command ───────────────────────────────────────────────────────────────────
 
-      description:
-        "Manage bot whitelist system",
+const command = defineCommand({
+  meta: {
+    name: "whitelist",
+    description:
+      "Manage the bot's whitelist — control which users and threads can access the bot",
+    otherNames: ["wl"],
+    version: "1.2.0",
+    usage:
+      "{prefix}{name} user <add|remove|list|on|off> [uid]\n" +
+      "{prefix}{name} thread <add|remove|list|on|off> [threadID]\n" +
+      "{prefix}{name} status",
+    category: "Owner",
+    author: "Converted from Azack (NeoKEX) by Claude",
+    role: 2,
+    noPrefix: false,
+    waitingTime: 3,
+    requirement: "3.0.0",
+    icon: "📋",
+  },
+  style: {
+    title: "📋 Whitelist",
+    titleFont: "bold",
+    contentFont: "fancy",
+  },
+  // ← Pattern correct : defineEntry + runInContext (comme ban.ts)
+  entry: defineEntry(async (ctx) => home.runInContext(ctx)),
+});
 
-      otherNames: [
-        "wl",
-      ],
-
-      version: "3.0.0",
-
-      usage:
-        "{prefix}whitelist <subcommand>",
-
-      category: "Owner",
-
-      author: "Christus dev AI",
-
-      role: 2,
-
-      waitingTime: 5,
-
-      icon: "👑",
-    },
-
-    style,
-
-    entry:
-      defineHome(home),
-  });
+const style = command.style;
 
 export default command;
+
