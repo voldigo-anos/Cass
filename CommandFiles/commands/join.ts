@@ -20,7 +20,7 @@ const command = defineCommand({
     author: "Christus",
     category: "Utility",
     usage: "{prefix}{name}",
-    role: 0,
+    role: 1.5,
     noPrefix: false,
     waitingTime: 5,
     requirement: "3.0.0",
