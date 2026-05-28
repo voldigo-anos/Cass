@@ -1,319 +1,329 @@
-// @ts-check
-
-/**
- * @type {CommandMeta}
- */
-export const meta = {
-  name: "pinterest",
-  description: "Search images on Pinterest with interactive canvas.",
-  author: "Christus",
-  version: "1.0.0",
-  usage: "{prefix}{name} <query> [-count]",
-  category: "Image",
-  permissions: [0],
-  noPrefix: false,
-  waitingTime: 10,
-  requirement: "3.0.0",
-  otherNames: ["pin"],
-  icon: "📌",
-  noLevelUI: true,
-  noWeb: true,
-};
-
 import axios from "axios";
-import fs from "fs-extra";
-import path from "path";
-import { createCanvas, loadImage } from "canvas";
-import { defineEntry } from "@cass/define";
+import { UNIRedux, UNISpectra } from "@cassidy/unispectra";
+import { defineCommand, defineEntry } from "@cass/define";
 
-const CACHE_DIR = path.join(process.cwd(), "cache", "pinterest");
-const PIN_API =
-  "https://egret-driving-cattle.ngrok-free.app/api/pin";
+// ─── Constants ────────────────────────────────────────────────────────────────
 
-/* -------------------- CANVAS -------------------- */
+const PINTEREST_API = "https://egret-driving-cattle.ngrok-free.app/api/pin";
+const IMAGES_PER_PAGE = 6; // Images sent per page (streams, not canvas)
+const MAX_DIRECT = 9;      // Max images for -count direct mode
 
-async function generatePinterestCanvas(
-  imageObjects: { url: string; originalIndex: number }[],
-  query: string,
-  page: number,
-  totalPages: number
-): Promise<{ outputPath: string; displayedMap: number[] }> {
-  const canvasWidth = 800;
-  const canvasHeight = 1600;
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-  const canvas = createCanvas(canvasWidth, canvasHeight);
-  const ctx = canvas.getContext("2d");
-
-  ctx.fillStyle = "#1e1e1e";
-  ctx.fillRect(0, 0, canvasWidth, canvasHeight);
-
-  ctx.fillStyle = "#ffffff";
-  ctx.font = "24px Arial";
-  ctx.fillText("🔍 Recherche Pinterest", 20, 45);
-
-  ctx.font = "16px Arial";
-  ctx.fillStyle = "#b0b0b0";
-  ctx.fillText(
-    `Résultats pour "${query}" (${imageObjects.length} images)`,
-    20,
-    75
-  );
-
-  const numColumns = 3;
-  const padding = 15;
-  const columnWidth =
-    (canvasWidth - padding * (numColumns + 1)) / numColumns;
-
-  const columnHeights = Array(numColumns).fill(100);
-
-  const loaded = await Promise.all(
-    imageObjects.map((obj) =>
-      loadImage(obj.url)
-        .then((img) => ({ img, originalIndex: obj.originalIndex }))
-        .catch(() => null)
+async function fetchStreams(urls: string[]): Promise<any[]> {
+  const results = await Promise.all(
+    urls.map((url) =>
+      global.utils.getStreamFromURL(url, "image.jpg").catch(() => null)
     )
   );
-
-  const valid = loaded.filter(Boolean) as {
-    img: any;
-    originalIndex: number;
-  }[];
-
-  const displayedMap: number[] = [];
-  let displayNumber = 0;
-
-  for (const { img, originalIndex } of valid) {
-    const colIndex = columnHeights.indexOf(
-      Math.min(...columnHeights)
-    );
-
-    const x = padding + colIndex * (columnWidth + padding);
-    const y = columnHeights[colIndex] + padding;
-
-    const scale = columnWidth / img.width;
-    const height = img.height * scale;
-
-    ctx.drawImage(img, x, y, columnWidth, height);
-
-    displayNumber++;
-    displayedMap.push(originalIndex);
-
-    ctx.fillStyle = "rgba(0,0,0,0.6)";
-    ctx.fillRect(x, y, 44, 22);
-
-    ctx.fillStyle = "#fff";
-    ctx.font = "bold 13px Arial";
-    ctx.textAlign = "center";
-    ctx.fillText(`#${displayNumber}`, x + 22, y + 15);
-
-    columnHeights[colIndex] += height + padding;
-  }
-
-  ctx.fillStyle = "#fff";
-  ctx.font = "bold 16px Arial";
-  ctx.textAlign = "center";
-  ctx.fillText(
-    `Page ${page}/${totalPages}`,
-    canvasWidth / 2,
-    Math.max(...columnHeights) + 40
-  );
-
-  await fs.ensureDir(CACHE_DIR);
-  const outputPath = path.join(
-    CACHE_DIR,
-    `pin_${Date.now()}.png`
-  );
-  fs.writeFileSync(outputPath, canvas.toBuffer("image/png"));
-
-  return { outputPath, displayedMap };
+  return results.filter(Boolean);
 }
 
-/* -------------------- ENTRY -------------------- */
+function buildPageHeader(
+  query: string,
+  page: number,
+  totalPages: number,
+  total: number,
+  startNum: number,
+  endNum: number
+): string {
+  return (
+    `${UNIRedux.charm} **Pinterest** 📌\n\n` +
+    `${UNISpectra.arrow} Query: **${query}**\n` +
+    `${UNISpectra.arrowFromT} **${total}** images found · Page **${page}/${totalPages}**\n` +
+    `${UNISpectra.arrowFromT} Showing images **#${startNum}** to **#${endNum}**\n\n` +
+    `${UNISpectra.arrow} Reply with a **number** to download that image\n` +
+    `${UNISpectra.arrowFromT} Reply \`next\` for the next page · \`prev\` for previous`
+  );
+}
 
-export const entry = defineEntry(
-  async ({ input, output, args }) => {
-    let count: number | null = null;
+// ─── Command ──────────────────────────────────────────────────────────────────
 
-    const countArg = args.find((a) => /^-\d+$/.test(a));
-    if (countArg) {
-      count = parseInt(countArg.slice(1), 10);
-      args = args.filter((a) => a !== countArg);
+const command = defineCommand({
+  meta: {
+    name: "pinterest",
+    otherNames: ["pin", "pint"],
+    description: "Search and browse Pinterest images",
+    version: "1.0.0",
+    author: "Christus",
+    category: "Image",
+    usage:
+      "{prefix}{name} <query> — interactive browser\n" +
+      "{prefix}{name} <query> -<count> — send images directly (max 9)",
+    role: 0,
+    noPrefix: false,
+    waitingTime: 10,
+    requirement: "3.0.0",
+    icon: "📌",
+  },
+  style: {
+    title: "📌 Pinterest",
+    titleFont: "bold",
+    contentFont: "fancy",
+  },
+
+  entry: defineEntry(async (ctx) => {
+    const { input, output } = ctx;
+
+    const rawArgs = [...(input.arguments ?? [])];
+
+    // ── Parse -count flag ──────────────────────────────────────────────────
+    let directCount: number | null = null;
+    const countArgIdx = rawArgs.findIndex((a) => /^-\d+$/.test(a));
+    if (countArgIdx !== -1) {
+      directCount = Math.min(parseInt(rawArgs[countArgIdx].slice(1)), MAX_DIRECT);
+      rawArgs.splice(countArgIdx, 1);
     }
 
-    const query = args.join(" ").trim();
+    const query = rawArgs.join(" ").trim();
     if (!query) {
-      return output.reply("❌ Please provide a search query.");
+      return output.replyStyled(
+        {
+          body:
+            `${UNIRedux.arrow} **Usage** ⚠️\n\n` +
+            `${UNISpectra.arrow} \`pinterest <query>\` — interactive browser\n` +
+            `${UNISpectra.arrowFromT} \`pinterest <query> -5\` — send 5 images directly`,
+        },
+        style
+      );
     }
 
-    await output.reply("🔍 Searching Pinterest...");
+    // ── Loading indicator ──────────────────────────────────────────────────
+    const loading = await output.replyStyled(
+      { body: `${UNIRedux.charm} **Pinterest** 🔍\n\n⏳ Searching for **${query}**...` },
+      style
+    );
 
+    // ── Fetch from Pinterest API ───────────────────────────────────────────
+    let allUrls: string[] = [];
     try {
-      const { data } = await axios.get<any>(
-        `${PIN_API}?query=${encodeURIComponent(query)}&num=90`
+      const res = await axios.get(PINTEREST_API, {
+        params: { query, num: 90 },
+        timeout: 15_000,
+      });
+      allUrls = (res.data?.results as string[]) ?? [];
+    } catch (err) {
+      await output.unsend(loading.messageID);
+      return output.replyStyled(
+        {
+          body:
+            `${UNIRedux.arrow} **API Error** ❌\n\n` +
+            `Could not reach the Pinterest API. Please try again later.`,
+        },
+        style
       );
+    }
 
-      const allImageUrls: string[] = data?.results || [];
-      if (!allImageUrls.length) {
-        return output.reply(`No images found for "${query}".`);
+    await output.unsend(loading.messageID);
+
+    if (allUrls.length === 0) {
+      return output.replyStyled(
+        {
+          body:
+            `${UNIRedux.arrow} **No Results** 📭\n\n` +
+            `No images found for **${query}**.`,
+        },
+        style
+      );
+    }
+
+    // ── Direct mode: -count ────────────────────────────────────────────────
+    if (directCount !== null) {
+      const urls = allUrls.slice(0, directCount);
+      const loadingDirect = await output.replyStyled(
+        { body: `${UNIRedux.charm} **Pinterest** 📌\n\n⏳ Loading ${urls.length} image(s)...` },
+        style
+      );
+      const streams = await fetchStreams(urls);
+      await output.unsend(loadingDirect.messageID);
+
+      if (streams.length === 0) {
+        return output.replyStyled(
+          { body: `${UNIRedux.arrow} **Error** ❌\n\nCould not load any images. Please try again.` },
+          style
+        );
       }
 
-      // 🔹 DIRECT SEND MODE
-      if (count) {
-        const urls = allImageUrls.slice(0, count);
-        const streams = await Promise.all(
-          urls.map((u) =>
-            global.utils.getStreamFromURL(u).catch(() => null)
-          )
-        );
+      return output.reply({
+        body:
+          `📌 **${streams.length}** image(s) for **"${query}"**\n` +
+          `${UNISpectra.arrowFromT} Use \`pinterest ${query}\` for the interactive browser.`,
+        attachment: streams,
+      });
+    }
 
-        const valid = streams.filter(Boolean);
-        return output.reply({
-          body: `📌 ${valid.length} image(s) for "${query}"`,
-          attachment: valid,
+    // ── Interactive mode: paged browser ───────────────────────────────────
+    const totalPages = Math.ceil(allUrls.length / IMAGES_PER_PAGE);
+
+    const sendPage = async (
+      page: number,
+      replyFn: (opts: any) => Promise<any>
+    ) => {
+      const startIdx = (page - 1) * IMAGES_PER_PAGE;
+      const endIdx = Math.min(startIdx + IMAGES_PER_PAGE, allUrls.length);
+      const pageUrls = allUrls.slice(startIdx, endIdx);
+
+      const loadingPage = await replyFn({
+        body: `⏳ Loading page ${page}/${totalPages}...`,
+      });
+
+      const streams = await fetchStreams(pageUrls);
+      await output.unsend(loadingPage.messageID).catch(() => {});
+
+      if (streams.length === 0) {
+        return replyFn({
+          body:
+            `${UNIRedux.arrow} **Page ${page} Error** ❌\n\n` +
+            `Could not load images for this page. Try \`next\`.`,
         });
       }
 
-      // 🔹 CANVAS MODE
-      const imagesPerPage = 21;
-      const totalPages = Math.ceil(
-        allImageUrls.length / imagesPerPage
+      const header = buildPageHeader(
+        query,
+        page,
+        totalPages,
+        allUrls.length,
+        startIdx + 1,
+        startIdx + streams.length
       );
 
-      const firstPageImages = allImageUrls
-        .slice(0, imagesPerPage)
-        .map((url, i) => ({ url, originalIndex: i }));
+      return replyFn({ body: header, attachment: streams });
+    };
 
-      const { outputPath, displayedMap } =
-        await generatePinterestCanvas(
-          firstPageImages,
-          query,
-          1,
-          totalPages
-        );
-
-      const msg = await output.reply({
-        body:
-          `🖼️ ${allImageUrls.length} images found for "${query}".\n` +
-          `Reply with a number (from canvas) or "next".`,
-        attachment: fs.createReadStream(outputPath),
-      });
-
-      fs.unlink(outputPath).catch(() => {});
-
-      input.setReply(msg.messageID, {
-        key: "pinterest",
-        id: input.senderID,
-        allImageUrls,
-        query,
-        imagesPerPage,
-        currentPage: 1,
-        totalPages,
-        displayedMap,
-      });
-    } catch (err) {
-      console.error(err);
-      output.reply("❌ Pinterest search failed.");
-    }
-  }
-);
-
-/* -------------------- REPLY -------------------- */
-
-export async function reply({
-  input,
-  output,
-  repObj,
-  detectID,
-}: any) {
-  const {
-    id,
-    allImageUrls,
-    query,
-    imagesPerPage,
-    currentPage,
-    totalPages,
-    displayedMap,
-  } = repObj;
-
-  if (input.senderID !== id) return;
-
-  const text = input.body.trim().toLowerCase();
-
-  // NEXT PAGE
-  if (text === "next") {
-    if (currentPage >= totalPages) {
-      return output.reply("You are already on the last page.");
-    }
-
-    const nextPage = currentPage + 1;
-    const start = (nextPage - 1) * imagesPerPage;
-    const end = Math.min(
-      start + imagesPerPage,
-      allImageUrls.length
+    // Send first page
+    const firstPageMsg = await sendPage(1, (opts) =>
+      output.reply(opts)
     );
 
-    const imgs = allImageUrls
-      .slice(start, end)
-      .map((u, i) => ({
-        url: u,
-        originalIndex: start + i,
-      }));
+    // ── Reply handler ──────────────────────────────────────────────────────
+    const registerReply = (
+      msg: any,
+      currentPage: number,
+      startIdx: number,
+      pageLength: number
+    ) => {
+      msg.atReply(async (replyCtx: any) => {
+        if (replyCtx.input.senderID !== input.senderID) return;
 
-    const { outputPath, displayedMap: map } =
-      await generatePinterestCanvas(
-        imgs,
-        query,
-        nextPage,
-        totalPages
-      );
+        const body = (replyCtx.input.body ?? "").trim().toLowerCase();
 
-    const msg = await output.reply({
-      body:
-        `🖼️ Page ${nextPage}/${totalPages}\n` +
-        `Reply with a number or "next".`,
-      attachment: fs.createReadStream(outputPath),
-    });
+        // ── next ────────────────────────────────────────────────────────
+        if (body === "next") {
+          if (currentPage >= totalPages) {
+            return replyCtx.output.replyStyled(
+              {
+                body:
+                  `${UNIRedux.arrow} **Last Page** ⚠️\n\n` +
+                  `You are already on the last page (${totalPages}).`,
+              },
+              style
+            );
+          }
+          const nextPage = currentPage + 1;
+          const nextMsg = await sendPage(nextPage, (opts) =>
+            replyCtx.output.reply(opts)
+          );
+          const nextStart = (nextPage - 1) * IMAGES_PER_PAGE;
+          const nextEnd = Math.min(nextStart + IMAGES_PER_PAGE, allUrls.length);
+          registerReply(nextMsg, nextPage, nextStart, nextEnd - nextStart);
+          return;
+        }
 
-    fs.unlink(outputPath).catch(() => {});
-    input.delReply(String(detectID));
+        // ── prev ────────────────────────────────────────────────────────
+        if (body === "prev" || body === "previous" || body === "back") {
+          if (currentPage <= 1) {
+            return replyCtx.output.replyStyled(
+              {
+                body:
+                  `${UNIRedux.arrow} **First Page** ⚠️\n\n` +
+                  `You are already on the first page.`,
+              },
+              style
+            );
+          }
+          const prevPage = currentPage - 1;
+          const prevMsg = await sendPage(prevPage, (opts) =>
+            replyCtx.output.reply(opts)
+          );
+          const prevStart = (prevPage - 1) * IMAGES_PER_PAGE;
+          const prevEnd = Math.min(prevStart + IMAGES_PER_PAGE, allUrls.length);
+          registerReply(prevMsg, prevPage, prevStart, prevEnd - prevStart);
+          return;
+        }
 
-    input.setReply(msg.messageID, {
-      key: "pinterest",
-      id,
-      allImageUrls,
-      query,
-      imagesPerPage,
-      currentPage: nextPage,
-      totalPages,
-      displayedMap: map,
-    });
-    return;
-  }
+        // ── number: download specific image ─────────────────────────────
+        const num = parseInt(body);
+        if (!isNaN(num) && num >= 1 && num <= allUrls.length) {
+          const targetUrl = allUrls[num - 1];
+          const loadingImg = await replyCtx.output.replyStyled(
+            { body: `⏳ Loading image **#${num}**...` },
+            style
+          );
+          const stream = await global.utils
+            .getStreamFromURL(targetUrl, "image.jpg")
+            .catch(() => null);
+          await output.unsend(loadingImg.messageID).catch(() => {});
 
-  // NUMBER SELECTION
-  const number = parseInt(text, 10);
-  if (!isNaN(number) && number > 0) {
-    if (!displayedMap[number - 1]) {
-      return output.reply("Invalid image number.");
-    }
+          if (!stream) {
+            return replyCtx.output.replyStyled(
+              {
+                body:
+                  `${UNIRedux.arrow} **Download Error** ❌\n\n` +
+                  `Could not load image **#${num}**. Please try another.`,
+              },
+              style
+            );
+          }
 
-    const imageUrl = allImageUrls[displayedMap[number - 1]];
-    const stream = await global.utils
-      .getStreamFromURL(imageUrl)
-      .catch(() => null);
+          return replyCtx.output.reply({
+            body: `📌 Image **#${num}** for **"${query}"**`,
+            attachment: stream,
+          });
+        }
 
-    if (!stream) {
-      return output.reply("Failed to fetch image.");
-    }
+        // ── page number: jump to page ────────────────────────────────────
+        const pageNum = parseInt(body.replace("page", "").trim());
+        if (!isNaN(pageNum) && body.startsWith("page")) {
+          if (pageNum < 1 || pageNum > totalPages) {
+            return replyCtx.output.replyStyled(
+              {
+                body:
+                  `${UNIRedux.arrow} **Invalid Page** ⚠️\n\n` +
+                  `Please enter a page between **1** and **${totalPages}**.`,
+              },
+              style
+            );
+          }
+          const jumpMsg = await sendPage(pageNum, (opts) =>
+            replyCtx.output.reply(opts)
+          );
+          const jumpStart = (pageNum - 1) * IMAGES_PER_PAGE;
+          const jumpEnd = Math.min(jumpStart + IMAGES_PER_PAGE, allUrls.length);
+          registerReply(jumpMsg, pageNum, jumpStart, jumpEnd - jumpStart);
+          return;
+        }
 
-    input.delReply(String(detectID));
-    return output.reply({
-      body: `📌 Image #${number} for "${query}"`,
-      attachment: stream,
-    });
-  }
+        // ── fallback ─────────────────────────────────────────────────────
+        return replyCtx.output.replyStyled(
+          {
+            body:
+              `${UNIRedux.arrow} **Invalid Input** ⚠️\n\n` +
+              `${UNISpectra.arrow} Reply with a **number** (1–${allUrls.length}) to download\n` +
+              `${UNISpectra.arrowFromT} \`next\` / \`prev\` to browse pages\n` +
+              `${UNISpectra.arrowFromT} \`page <n>\` to jump to a specific page`,
+          },
+          style
+        );
+      });
+    };
 
-  return output.reply(
-    'Reply with a number (from canvas) or "next".'
-  );
-}
+    const firstStart = 0;
+    const firstEnd = Math.min(IMAGES_PER_PAGE, allUrls.length);
+    registerReply(firstPageMsg, 1, firstStart, firstEnd - firstStart);
+  }),
+});
+
+const style = command.style;
+
+export default command;
+
