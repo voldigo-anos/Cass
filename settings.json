@@ -97,8 +97,8 @@
   "silentNotiMode": false,
   "verboseErrorStacks": false,
   "verboseBotMode": false,
-  "gambleNeedsMint": true,
-  "strictGambleNeedsMint": true,
+  "gambleNeedsMint": false,
+  "strictGambleNeedsMint": false,
   "DEBUG": false,
   "DEBUG_PROPS": [
     "CommandContext.threadsDB",
