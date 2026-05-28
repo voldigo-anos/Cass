@@ -2,13 +2,11 @@ import axios from "axios";
 import { UNIRedux, UNISpectra } from "@cassidy/unispectra";
 import { defineCommand, defineEntry } from "@cass/define";
 
-// ─── Constants ────────────────────────────────────────────────────────────────
-
 const PINTEREST_API = "https://egret-driving-cattle.ngrok-free.app/api/pin";
-const IMAGES_PER_PAGE = 6; // Images sent per page (streams, not canvas)
-const MAX_DIRECT = 9;      // Max images for -count direct mode
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+const IMAGES_PER_PAGE = 6;
+const MAX_DIRECT = 50;
+const BATCH_SIZE = 10;
+const BATCH_DELAY = 1000;
 
 async function fetchStreams(urls: string[]): Promise<any[]> {
   const results = await Promise.all(
@@ -17,6 +15,24 @@ async function fetchStreams(urls: string[]): Promise<any[]> {
     )
   );
   return results.filter(Boolean);
+}
+
+async function fetchStreamsBatch(urls: string[]): Promise<any[]> {
+  const results = [];
+  for (let i = 0; i < urls.length; i += BATCH_SIZE) {
+    const batch = urls.slice(i, i + BATCH_SIZE);
+    const batchResults = await Promise.all(
+      batch.map((url) =>
+        global.utils.getStreamFromURL(url, "image.jpg").catch(() => null)
+      )
+    );
+    results.push(...batchResults.filter(Boolean));
+    
+    if (i + BATCH_SIZE < urls.length) {
+      await new Promise(resolve => setTimeout(resolve, BATCH_DELAY));
+    }
+  }
+  return results;
 }
 
 function buildPageHeader(
@@ -37,8 +53,6 @@ function buildPageHeader(
   );
 }
 
-// ─── Command ──────────────────────────────────────────────────────────────────
-
 const command = defineCommand({
   meta: {
     name: "pinterest",
@@ -49,7 +63,7 @@ const command = defineCommand({
     category: "Image",
     usage:
       "{prefix}{name} <query> — interactive browser\n" +
-      "{prefix}{name} <query> -<count> — send images directly (max 9)",
+      "{prefix}{name} <query> -<count> — send images directly (max 50)",
     role: 0,
     noPrefix: false,
     waitingTime: 10,
@@ -67,7 +81,6 @@ const command = defineCommand({
 
     const rawArgs = [...(input.arguments ?? [])];
 
-    // ── Parse -count flag ──────────────────────────────────────────────────
     let directCount: number | null = null;
     const countArgIdx = rawArgs.findIndex((a) => /^-\d+$/.test(a));
     if (countArgIdx !== -1) {
@@ -82,19 +95,17 @@ const command = defineCommand({
           body:
             `${UNIRedux.arrow} **Usage** ⚠️\n\n` +
             `${UNISpectra.arrow} \`pinterest <query>\` — interactive browser\n` +
-            `${UNISpectra.arrowFromT} \`pinterest <query> -5\` — send 5 images directly`,
+            `${UNISpectra.arrowFromT} \`pinterest <query> -50\` — send 50 images directly`,
         },
         style
       );
     }
 
-    // ── Loading indicator ──────────────────────────────────────────────────
     const loading = await output.replyStyled(
       { body: `${UNIRedux.charm} **Pinterest** 🔍\n\n⏳ Searching for **${query}**...` },
       style
     );
 
-    // ── Fetch from Pinterest API ───────────────────────────────────────────
     let allUrls: string[] = [];
     try {
       const res = await axios.get(PINTEREST_API, {
@@ -127,14 +138,13 @@ const command = defineCommand({
       );
     }
 
-    // ── Direct mode: -count ────────────────────────────────────────────────
     if (directCount !== null) {
       const urls = allUrls.slice(0, directCount);
       const loadingDirect = await output.replyStyled(
-        { body: `${UNIRedux.charm} **Pinterest** 📌\n\n⏳ Loading ${urls.length} image(s)...` },
+        { body: `${UNIRedux.charm} **Pinterest** 📌\n\n⏳ Loading ${urls.length} image(s) in batches...\n⚠️ This may take up to 30 seconds...` },
         style
       );
-      const streams = await fetchStreams(urls);
+      const streams = await fetchStreamsBatch(urls);
       await output.unsend(loadingDirect.messageID);
 
       if (streams.length === 0) {
@@ -152,7 +162,6 @@ const command = defineCommand({
       });
     }
 
-    // ── Interactive mode: paged browser ───────────────────────────────────
     const totalPages = Math.ceil(allUrls.length / IMAGES_PER_PAGE);
 
     const sendPage = async (
@@ -190,12 +199,10 @@ const command = defineCommand({
       return replyFn({ body: header, attachment: streams });
     };
 
-    // Send first page
     const firstPageMsg = await sendPage(1, (opts) =>
       output.reply(opts)
     );
 
-    // ── Reply handler ──────────────────────────────────────────────────────
     const registerReply = (
       msg: any,
       currentPage: number,
@@ -207,7 +214,6 @@ const command = defineCommand({
 
         const body = (replyCtx.input.body ?? "").trim().toLowerCase();
 
-        // ── next ────────────────────────────────────────────────────────
         if (body === "next") {
           if (currentPage >= totalPages) {
             return replyCtx.output.replyStyled(
@@ -229,7 +235,6 @@ const command = defineCommand({
           return;
         }
 
-        // ── prev ────────────────────────────────────────────────────────
         if (body === "prev" || body === "previous" || body === "back") {
           if (currentPage <= 1) {
             return replyCtx.output.replyStyled(
@@ -251,7 +256,6 @@ const command = defineCommand({
           return;
         }
 
-        // ── number: download specific image ─────────────────────────────
         const num = parseInt(body);
         if (!isNaN(num) && num >= 1 && num <= allUrls.length) {
           const targetUrl = allUrls[num - 1];
@@ -281,7 +285,6 @@ const command = defineCommand({
           });
         }
 
-        // ── page number: jump to page ────────────────────────────────────
         const pageNum = parseInt(body.replace("page", "").trim());
         if (!isNaN(pageNum) && body.startsWith("page")) {
           if (pageNum < 1 || pageNum > totalPages) {
@@ -303,7 +306,6 @@ const command = defineCommand({
           return;
         }
 
-        // ── fallback ─────────────────────────────────────────────────────
         return replyCtx.output.replyStyled(
           {
             body:
@@ -326,4 +328,3 @@ const command = defineCommand({
 const style = command.style;
 
 export default command;
-
