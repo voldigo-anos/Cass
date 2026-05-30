@@ -192,7 +192,7 @@ const command = defineCommand({
   entry: defineEntry(async (ctx) => {
     const { input, output, money } = ctx;
     const args = input.arguments ?? [];
-    const sub  = (args[0] || "balance").toLowerCase();
+    const sub  = (args[0] || "help").toLowerCase();
 
     // ── Load data ──────────────────────────────────────────────────────────
     let userData: any = await money.getItem(input.senderID);
