@@ -7,14 +7,14 @@ import axios from "axios";
 
 const config = {
   name: "gemini",
-  version: "2.0.3",
+  version: "3.0.0",
   permissions: [0],
   noPrefix: "both",
-  credits: "rapido",
+  credits: "rapido • API migrated by Christus",
   description:
-    "Interact with Google Gemini 2.0 Flash with Image recognition (From rapido's XaviaBot command) basically just added this CMD by Liane Cagara's CassieahBot for Testing compatibility of ChatBot.",
+    "Interact with Google Gemini via christus-s-apis with session support.",
   category: "AI",
-  usages: "[text] (reply to image)",
+  usages: "[text]",
   cooldown: 3,
 };
 
@@ -24,31 +24,61 @@ const style = {
   contentFont: "fancy",
 };
 
-async function onCall({ message, args, getLang }) {
-  const text = args.join(" ");
-  if (!text)
+const API_BASE = "https://christus-s-apis.vercel.app/api/prexzy/ai/gemini";
+const TIMEOUT_MS = 45_000;
+const MAX_INPUT = 1_500;
+
+function extractReply(data: any): string {
+  if (!data) return "";
+  if (typeof data === "string") return data.trim();
+  for (const key of ["response", "reply", "message", "answer", "text", "result"]) {
+    if (typeof data[key] === "string" && data[key].trim()) {
+      return data[key].trim();
+    }
+  }
+  return "";
+}
+
+async function onCall({ message, args }) {
+  const text = (args.join(" ") || "").trim();
+
+  if (!text) {
     return message.reply(
-      "Please provide a question or reply to photo/image to recognize it with question."
+      "💬 Fournis une question.\nExemple : .gemini Explique la photosynthèse."
     );
+  }
+
+  if (text.length > MAX_INPUT) {
+    return message.reply(`⚠️ Message trop long (max ${MAX_INPUT} caractères).`);
+  }
+
+  const sessionId = message.senderID;
+  if (!sessionId) {
+    return message.reply("❌ Impossible d'identifier l'utilisateur.");
+  }
 
   try {
-    let imageUrl;
-    if (message.messageReply?.attachments?.[0]?.type === "photo") {
-      imageUrl = message.messageReply.attachments[0].url;
+    const params = new URLSearchParams({
+      prompt: text,
+      session_id: String(sessionId),
+    });
+
+    const res = await axios.get(`${API_BASE}?${params.toString()}`, {
+      timeout: TIMEOUT_MS,
+      maxContentLength: 5 * 1024 * 1024,
+    });
+
+    const answer = extractReply(res.data);
+
+    if (!answer) {
+      console.error("Gemini API - réponse vide :", JSON.stringify(res.data));
+      return message.reply("❌ L'IA n'a pas renvoyé de réponse exploitable.");
     }
 
-    const api = `https://rapido-api.vercel.app/api/gemini?chat=${encodeURIComponent(
-      text
-    )}&uid=${message.senderID}${
-      imageUrl ? `&imageUrl=${encodeURIComponent(imageUrl)}` : ""
-    }`;
-    const res = await axios.get(api);
-
-    message.reply(res.data.response);
-  } catch (e) {
-    message.reply(
-      `An error occurred while fetching data: ${e.message}\nPlease contact admin of bot for assistance.`
-    );
+    return message.reply(answer);
+  } catch (e: any) {
+    console.error("Gemini error:", e?.response?.data ?? e.message);
+    return message.reply("❌ Une erreur est survenue. Réessaie dans un instant.");
   }
 }
 
