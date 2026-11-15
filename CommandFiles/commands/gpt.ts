@@ -7,7 +7,7 @@ import { randomUUID } from "crypto";
 const cmd = easyCMD({
   name: "gpt",
   meta: {
-    otherNames: ["gpt4o", "ai", "ask"],
+    otherNames: [],
     author: "From Haji Mix REST API, handled by Liane Cagara • API migrated by Christus",
     description:
       "Versatile AI assistant powered by GPT-4o via christus-s-apis.",
