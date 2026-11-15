@@ -1,15 +1,25 @@
 import axios from "axios";
-import fs from "fs";
+import fs from "fs/promises";
 import path from "path";
+import { randomUUID } from "crypto";
 import { defineEntry } from "@cass/define";
 import { UNISpectra } from "@cassidy/unispectra";
+
+const API_BASE = "https://image-gen-fix.vercel.app";
+const GENERATE_URL = `${API_BASE}/generate`;
+const EDIT_URL = `${API_BASE}/edit`;
+const TIMEOUT_API = 90_000;
+const MAX_PROMPT = 500;
+const RATIO_RE = /^\d{1,2}:\d{1,2}$/;
+const URL_RE = /^https?:\/\/\S+$/i;
+const inFlight = new Set<string>();
 
 export const meta: CommandMeta = {
   name: "gem",
   description: "Generate or edit artistic AI images",
   author: "Christus dev AI",
-  version: "3.0.0",
-  usage: "{prefix}gem <prompt> [--r X:Y] [--nw]",
+  version: "3.1.0",
+  usage: "{prefix}gem <prompt> [--r X:Y] [--nw] (reply to image to edit)",
   category: "Image Generator",
   role: 2,
   waitingTime: 5,
@@ -25,209 +35,164 @@ export const style: CommandStyle = {
 
 export const langs = {
   en: {
-    noPrompt:
-      "⚠️ Please provide a prompt.\nExample: {prefix}gem anime girl --r 9:16",
-
-    generating:
-      "🎨 Generating your masterpiece...\nPlease wait...",
-
-    success:
-      "✅ Masterpiece created successfully!",
-
-    artistic:
-      "🎨 Artistic Mode Enabled",
-
-    failed:
-      "❌ Failed to generate image.",
+    noPrompt: "⚠️ Please provide a prompt.\nExample: {prefix}gem crystal dragon --r 16:9",
+    generating: "🎨 Generating your masterpiece...\nPlease wait...",
+    success: "✅ Masterpiece created successfully!",
+    editSuccess: "✅ Image edited successfully!",
+    artistic: "🎨 Artistic Mode Enabled",
+    failed: "❌ Failed to generate image.",
+    busy: "⏳ You already have a generation in progress.",
+    badRatio: "⚠️ Invalid ratio (use e.g. 1:1, 9:16, 16:9).",
+    tooLong: "⚠️ Prompt too long (max 500 chars).",
+  },
+  fr: {
+    noPrompt: "⚠️ Veuillez fournir un prompt.\nExemple : {prefix}gem dragon de cristal --r 16:9",
+    generating: "🎨 Génération de votre chef-d'œuvre...\nPatientez...",
+    success: "✅ Chef-d'œuvre créé avec succès !",
+    editSuccess: "✅ Image modifiée avec succès !",
+    artistic: "🎨 Mode artistique activé",
+    failed: "❌ Échec de la génération.",
+    busy: "⏳ Une génération est déjà en cours.",
+    badRatio: "⚠️ Ratio invalide (ex : 1:1, 9:16, 16:9).",
+    tooLong: "⚠️ Prompt trop long (max 500 caractères).",
   },
 };
 
-export const entry = defineEntry(
-  async ({
-    args,
-    output,
-    input,
-    langParser,
-  }) => {
+function extractApiError(err: any): string {
+  try {
+    const data = err?.response?.data;
+    if (data) {
+      const text = Buffer.isBuffer(data)
+        ? data.toString("utf-8")
+        : Buffer.from(data).toString("utf-8");
+      try {
+        const json = JSON.parse(text);
+        return json.error || json.message || text.slice(0, 200);
+      } catch {
+        return text.slice(0, 200);
+      }
+    }
+  } catch {}
+  return err?.message || "Unknown error";
+}
 
-    const getLang =
-      langParser.createGetLang(langs);
+export const entry = defineEntry(async ({ args, output, input, langParser, event }) => {
+  const getLang = langParser.createGetLang(langs);
+  const userId = event?.senderID ?? "anon";
 
-    if (!args[0]) {
-      output.react("⚠️");
+  if (!args[0]) {
+    try { await output.react("⚠️"); } catch {}
+    return output.reply(getLang("noPrompt"));
+  }
 
-      return output.reply(
-        getLang("noPrompt")
-      );
+  if (inFlight.has(userId)) {
+    try { await output.react("⏳"); } catch {}
+    return output.reply(getLang("busy"));
+  }
+  inFlight.add(userId);
+
+  const cacheFolder = path.join(process.cwd(), "CommandFiles", "cache");
+  let filePath: string | null = null;
+
+  try {
+    await output.react("🎨");
+    await fs.mkdir(cacheFolder, { recursive: true });
+
+    const promptParts: string[] = [];
+    let ratio = "1:1";
+    let artisticMode = false;
+    let imageUrl: string | null = null;
+
+    const repliedPhoto = input.replier?.attachments?.find(
+      (a: any) => a?.type === "photo" && a?.url
+    );
+    if (repliedPhoto) imageUrl = repliedPhoto.url;
+
+    for (let i = 0; i < args.length; i++) {
+      const a = args[i];
+      if (a === "--r" && args[i + 1]) {
+        ratio = args[i + 1];
+        i++;
+      } else if (a === "--nw") {
+        artisticMode = true;
+      } else if (RATIO_RE.test(a)) {
+        ratio = a;
+      } else if (URL_RE.test(a) && !imageUrl) {
+        imageUrl = a;
+      } else {
+        promptParts.push(a);
+      }
     }
 
-    try {
+    const userPrompt = promptParts.join(" ").trim();
 
-      output.react("🎨");
+    if (!userPrompt) {
+      try { await output.react("⚠️"); } catch {}
+      return output.reply(getLang("noPrompt"));
+    }
+    if (userPrompt.length > MAX_PROMPT) {
+      try { await output.react("⚠️"); } catch {}
+      return output.reply(getLang("tooLong"));
+    }
+    if (!RATIO_RE.test(ratio)) {
+      try { await output.react("⚠️"); } catch {}
+      return output.reply(getLang("badRatio"));
+    }
 
-      const cacheFolder =
-        path.join(process.cwd(), "CommandFiles", "cache");
+    let finalPrompt = userPrompt;
+    if (artisticMode) {
+      finalPrompt = `Sophisticated fine art photography, classical figure study, artistic lighting, gallery quality: ${userPrompt}`;
+    }
 
-      if (!fs.existsSync(cacheFolder)) {
-        fs.mkdirSync(cacheFolder, {
-          recursive: true,
-        });
-      }
+    const isEdit = !!imageUrl;
 
-      let promptParts: string[] = [];
+    const requestConfig = {
+      responseType: "arraybuffer" as const,
+      timeout: TIMEOUT_API,
+      maxContentLength: 25 * 1024 * 1024,
+      headers: { Accept: "*/*", "User-Agent": "Mozilla/5.0" },
+    };
 
-      let ratio =
-        "1:1";
-
-      let artisticMode =
-        false;
-
-      for (let i = 0; i < args.length; i++) {
-
-        if (
-          args[i] === "--r" &&
-          args[i + 1]
-        ) {
-
-          ratio =
-            args[i + 1];
-
-          i++;
-
-        } else if (
-          args[i] === "--nw"
-        ) {
-
-          artisticMode =
-            true;
-
-        } else {
-
-          promptParts.push(
-            args[i]
-          );
-        }
-      }
-
-      const userPrompt =
-        promptParts.join(" ").trim();
-
-      if (!userPrompt) {
-
-        output.react("⚠️");
-
-        return output.reply(
-          getLang("noPrompt")
-        );
-      }
-
-      let finalPrompt =
-        userPrompt;
-
-      if (artisticMode) {
-
-        finalPrompt =
-          `Sophisticated fine art photography, classical figure study, artistic lighting, gallery quality: ${userPrompt}`;
-      }
-
-      let endpoint =
-        "https://gem-tw6a.onrender.com/generate";
-
-      let payload: any = {
-        prompt: finalPrompt,
-        ratio,
-        format: "jpg",
-      };
-
-      const repliedPhoto =
-        input.replier?.attachments?.[0];
-
-      if (
-        repliedPhoto &&
-        repliedPhoto.type === "photo"
-      ) {
-
-        const imgURL =
-          repliedPhoto.url;
-
-        const imgRes =
-          await axios.get(imgURL, {
-            responseType: "arraybuffer",
-          });
-
-        const imgBase64 =
-          Buffer.from(
-            imgRes.data,
-            "binary"
-          ).toString("base64");
-
-        endpoint =
-          "https://gem-tw6a.onrender.com/edit";
-
-        payload.image =
-          imgBase64;
-
-        delete payload.ratio;
-      }
-
-      const response =
-        await axios.post(
-          endpoint,
-          payload,
-          {
-            responseType: "arraybuffer",
-            timeout: 180000,
-            headers: {
-              Accept: "*/*",
-              "User-Agent":
-                "Mozilla/5.0",
-            },
-          }
+    const response = isEdit
+      ? await axios.post(
+          EDIT_URL,
+          { prompt: finalPrompt, image: imageUrl, ratio },
+          requestConfig
+        )
+      : await axios.post(
+          GENERATE_URL,
+          { prompt: finalPrompt, ratio, format: "jpg", nw: true },
+          requestConfig
         );
 
-      const filePath =
-        path.join(
-          cacheFolder,
-          `gem_${Date.now()}.jpg`
-        );
+    const contentType = String(response.headers?.["content-type"] ?? "");
+    if (!contentType.startsWith("image/")) {
+      console.error("Gem API non-image response:", contentType);
+      try { await output.react("❌"); } catch {}
+      return output.reply(getLang("failed"));
+    }
 
-      fs.writeFileSync(
-        filePath,
-        response.data
-      );
+    filePath = path.join(cacheFolder, `gem_${Date.now()}_${randomUUID()}.jpg`);
+    await fs.writeFile(filePath, Buffer.from(response.data));
 
-      await output.reply({
-        body:
-          `${UNISpectra.charm} ${getLang("success")}\n\n` +
-          `📝 Prompt: ${userPrompt}\n` +
-          `📐 Ratio: ${ratio}` +
-          `${artisticMode ? `\n✨ ${getLang("artistic")}` : ""}`,
+    await output.reply({
+      body:
+        `${UNISpectra.charm} ${isEdit ? getLang("editSuccess") : getLang("success")}\n\n` +
+        `📝 Prompt: ${userPrompt}\n` +
+        `📐 Ratio: ${ratio}` +
+        (artisticMode ? `\n✨ ${getLang("artistic")}` : ""),
+      attachment: filePath,
+    });
 
-        attachment:
-          fs.createReadStream(filePath),
-      });
-
-      output.react("✅");
-
-      fs.unlink(
-        filePath,
-        () => {}
-      );
-
-    } catch (err: any) {
-
-      console.error(
-        "Gem Error:",
-        err?.message || err
-      );
-
-      output.react("❌");
-
-      return output.reply(
-        `${getLang("failed")}\n\n📝 ${
-          err?.message || "Unknown error"
-        }`
-      );
+    try { await output.react("✅"); } catch {}
+  } catch (err: any) {
+    console.error("Gem Error:", err?.response?.data ?? err?.message ?? err);
+    try { await output.react("❌"); } catch {}
+    return output.reply(`${getLang("failed")}\n\n📝 ${extractApiError(err)}`);
+  } finally {
+    inFlight.delete(userId);
+    if (filePath) {
+      try { await fs.unlink(filePath); } catch {}
     }
   }
-);
+});
