@@ -6,17 +6,22 @@ import { v4 as uuidv4 } from "uuid";
 import { defineEntry } from "@cass/define";
 import { UNISpectra } from "@cassidy/unispectra";
 
-const API_ENDPOINT = "https://shizuai.vercel.app/chat";
-const CLEAR_ENDPOINT = "https://shizuai.vercel.app/chat/clear";
+const API_BASE = "https://christus-api-chat.vercel.app";
+const API_ENDPOINT = `${API_BASE}/chat`;
+const CLEAR_ENDPOINT = `${API_BASE}/chat/clear`;
 const TMP_DIR = path.join(__dirname, "cache");
 
-/* ================= META ================= */
+const HTTP_TIMEOUT_POST = 60_000;
+const HTTP_TIMEOUT_DELETE = 20_000;
+const HTTP_TIMEOUT_DL = 60_000;
+const RETRY_MAX = 3;
+const RETRY_DELAY_MS = (attempt: number) => 4_000 * attempt;
 
 export const meta: CommandMeta = {
   name: "ai",
   description: "Assistant IA avancé (texte, image, musique, vidéo, lyrics)",
-  author: "Aryan Chauchan • TS fixed by Christus",
-  version: "3.0.0",
+  author: "Christus",
+  version: "3.1.0",
   usage: "ai <message | image>",
   category: "AI",
   role: 0,
@@ -31,8 +36,6 @@ export const style: CommandStyle = {
   titleFont: "bold",
   contentFont: "fancy",
 };
-
-/* ================= LANG ================= */
 
 export const langs = {
   fr: {
@@ -51,17 +54,41 @@ export const langs = {
   },
 };
 
-/* ================= UTILS ================= */
-
 async function download(url: string, ext: string): Promise<string> {
   await fs.ensureDir(TMP_DIR);
   const filePath = path.join(TMP_DIR, `${uuidv4()}.${ext}`);
-  const res = await axios.get(url, { responseType: "arraybuffer" });
+  const res = await axios.get(url, {
+    responseType: "arraybuffer",
+    timeout: HTTP_TIMEOUT_DL,
+    maxContentLength: 50 * 1024 * 1024,
+  });
   await fs.writeFile(filePath, res.data);
   return filePath;
 }
 
-/* ================= NORMALIZE ================= */
+async function postWithRetry<T = any>(payload: Record<string, any>): Promise<T> {
+  let lastErr: any;
+  for (let attempt = 1; attempt <= RETRY_MAX; attempt++) {
+    try {
+      const res = await axios.post(API_ENDPOINT, payload, {
+        timeout: HTTP_TIMEOUT_POST,
+      });
+      if (typeof res.data?.reply === "string" && res.data.reply.trim()) {
+        return res.data as T;
+      }
+      lastErr = new Error("Réponse API au format inattendu.");
+      console.error(`❌ IA - réponse invalide (tentative ${attempt}/${RETRY_MAX})`);
+    } catch (err: any) {
+      lastErr = err;
+      const detail = err.response?.data ?? err.message;
+      console.error(`❌ IA - tentative ${attempt}/${RETRY_MAX} :`, detail);
+    }
+    if (attempt < RETRY_MAX) {
+      await new Promise((r) => setTimeout(r, RETRY_DELAY_MS(attempt)));
+    }
+  }
+  throw lastErr;
+}
 
 function normalizeText(text: string): string {
   if (!text) return text;
@@ -70,8 +97,6 @@ function normalizeText(text: string): string {
     .replace(/Aryan\s*Chauhan/gi, "Christus")
     .replace(/A\.?\s*Chauchan/gi, "Christus");
 }
-
-/* ================= ENTRY ================= */
 
 export const entry = defineEntry(async ({ args, event, output, langParser }) => {
   const getLang = langParser.createGetLang(langs);
@@ -84,9 +109,13 @@ export const entry = defineEntry(async ({ args, event, output, langParser }) => 
 
   if (["clear", "reset"].includes(input.toLowerCase())) {
     try {
-      await axios.delete(`${CLEAR_ENDPOINT}/${encodeURIComponent(userId)}`);
+      await axios.delete(
+        `${CLEAR_ENDPOINT}/${encodeURIComponent(userId)}`,
+        { timeout: HTTP_TIMEOUT_DELETE }
+      );
       return output.reply(getLang("resetSuccess"));
-    } catch {
+    } catch (err: any) {
+      console.error("IA - reset :", err.response?.data ?? err.message);
       return output.reply(getLang("resetFail"));
     }
   }
@@ -99,20 +128,24 @@ export const entry = defineEntry(async ({ args, event, output, langParser }) => 
     `${UNISpectra.charm} ${getLang("processing")}\n• 📅 ${timestamp}`
   );
 
-  /* ===== IMAGE DETECTION ===== */
-
   let imageUrl: string | null = null;
+  const PHOTO_TYPES = new Set(["photo", "animated_image"]);
 
-  const directImage = event.attachments?.find(a => a.type === "photo");
+  const directImage = event.attachments?.find(
+    (a) => PHOTO_TYPES.has(a.type) || a.type === "photo"
+  );
   if (directImage?.url) imageUrl = directImage.url;
 
-  const replyImage = event.messageReply?.attachments?.find(a => a.type === "photo");
+  const replyImage = event.messageReply?.attachments?.find(
+    (a) => PHOTO_TYPES.has(a.type) || a.type === "photo"
+  );
   if (replyImage?.url) imageUrl = replyImage.url;
 
   const createdFiles: string[] = [];
+  let loadingConsumed = false;
 
   try {
-    const res = await axios.post(API_ENDPOINT, {
+    const data = await postWithRetry({
       uid: userId,
       message: input,
       image_url: imageUrl,
@@ -125,7 +158,7 @@ export const entry = defineEntry(async ({ args, event, output, langParser }) => 
       video_data,
       shoti_data,
       lyrics_data,
-    } = res.data;
+    } = data;
 
     let body = normalizeText(reply || "✅ AI Response");
     const attachments: any[] = [];
@@ -160,22 +193,28 @@ export const entry = defineEntry(async ({ args, event, output, langParser }) => 
       )}`;
     }
 
-    await output.unsend(loading.messageID);
+    if (loading?.messageID) {
+      try {
+        await output.unsend(loading.messageID);
+        loadingConsumed = true;
+      } catch {}
+    }
 
     await output.reply({
       body,
       attachment: attachments.length ? attachments : undefined,
     });
-
-  } catch (err) {
-    console.error("AI Error:", err);
-    await output.unsend(loading.messageID);
+  } catch (err: any) {
+    console.error("IA Error:", err.response?.data ?? err.message);
+    if (!loadingConsumed && loading?.messageID) {
+      try { await output.unsend(loading.messageID); } catch {}
+    }
     await output.reply(getLang("error"));
   } finally {
     for (const file of createdFiles) {
-      if (await fs.pathExists(file)) {
-        await fs.remove(file);
-      }
+      try {
+        if (await fs.pathExists(file)) await fs.remove(file);
+      } catch {}
     }
   }
 });
