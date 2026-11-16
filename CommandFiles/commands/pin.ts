@@ -2,11 +2,12 @@ import axios from "axios";
 import { UNIRedux, UNISpectra } from "@cassidy/unispectra";
 import { defineCommand, defineEntry } from "@cass/define";
 
-const PINTEREST_API = "https://egret-driving-cattle.ngrok-free.app/api/pin";
+const PINTEREST_API = "https://image-explorer-max.vercel.app/api/pin";
 const IMAGES_PER_PAGE = 6;
 const MAX_DIRECT = 50;
 const BATCH_SIZE = 10;
 const BATCH_DELAY = 1000;
+const MAX_RESULTS = 200;
 
 async function fetchStreams(urls: string[]): Promise<any[]> {
   const results = await Promise.all(
@@ -27,9 +28,9 @@ async function fetchStreamsBatch(urls: string[]): Promise<any[]> {
       )
     );
     results.push(...batchResults.filter(Boolean));
-    
+
     if (i + BATCH_SIZE < urls.length) {
-      await new Promise(resolve => setTimeout(resolve, BATCH_DELAY));
+      await new Promise((resolve) => setTimeout(resolve, BATCH_DELAY));
     }
   }
   return results;
@@ -58,7 +59,7 @@ const command = defineCommand({
     name: "pinterest",
     otherNames: ["pin", "pint"],
     description: "Search and browse Pinterest images",
-    version: "1.0.0",
+    version: "1.0.1",
     author: "Christus",
     category: "Image",
     usage:
@@ -84,7 +85,10 @@ const command = defineCommand({
     let directCount: number | null = null;
     const countArgIdx = rawArgs.findIndex((a) => /^-\d+$/.test(a));
     if (countArgIdx !== -1) {
-      directCount = Math.min(parseInt(rawArgs[countArgIdx].slice(1)), MAX_DIRECT);
+      directCount = Math.min(
+        parseInt(rawArgs[countArgIdx].slice(1), 10),
+        MAX_DIRECT
+      );
       rawArgs.splice(countArgIdx, 1);
     }
 
@@ -102,14 +106,16 @@ const command = defineCommand({
     }
 
     const loading = await output.replyStyled(
-      { body: `${UNIRedux.charm} **Pinterest** 🔍\n\n⏳ Searching for **${query}**...` },
+      {
+        body: `${UNIRedux.charm} **Pinterest** 🔍\n\n⏳ Searching for **${query}**...`,
+      },
       style
     );
 
     let allUrls: string[] = [];
     try {
       const res = await axios.get(PINTEREST_API, {
-        params: { query, num: 90 },
+        params: { query, num: MAX_RESULTS },
         timeout: 15_000,
       });
       allUrls = (res.data?.results as string[]) ?? [];
@@ -141,7 +147,9 @@ const command = defineCommand({
     if (directCount !== null) {
       const urls = allUrls.slice(0, directCount);
       const loadingDirect = await output.replyStyled(
-        { body: `${UNIRedux.charm} **Pinterest** 📌\n\n⏳ Loading ${urls.length} image(s) in batches...\n⚠️ This may take up to 30 seconds...` },
+        {
+          body: `${UNIRedux.charm} **Pinterest** 📌\n\n⏳ Loading ${urls.length} image(s) in batches...\n⚠️ This may take up to 30 seconds...`,
+        },
         style
       );
       const streams = await fetchStreamsBatch(urls);
@@ -149,7 +157,9 @@ const command = defineCommand({
 
       if (streams.length === 0) {
         return output.replyStyled(
-          { body: `${UNIRedux.arrow} **Error** ❌\n\nCould not load any images. Please try again.` },
+          {
+            body: `${UNIRedux.arrow} **Error** ❌\n\nCould not load any images. Please try again.`,
+          },
           style
         );
       }
@@ -199,9 +209,7 @@ const command = defineCommand({
       return replyFn({ body: header, attachment: streams });
     };
 
-    const firstPageMsg = await sendPage(1, (opts) =>
-      output.reply(opts)
-    );
+    const firstPageMsg = await sendPage(1, (opts) => output.reply(opts));
 
     const registerReply = (
       msg: any,
@@ -230,7 +238,10 @@ const command = defineCommand({
             replyCtx.output.reply(opts)
           );
           const nextStart = (nextPage - 1) * IMAGES_PER_PAGE;
-          const nextEnd = Math.min(nextStart + IMAGES_PER_PAGE, allUrls.length);
+          const nextEnd = Math.min(
+            nextStart + IMAGES_PER_PAGE,
+            allUrls.length
+          );
           registerReply(nextMsg, nextPage, nextStart, nextEnd - nextStart);
           return;
         }
@@ -251,12 +262,15 @@ const command = defineCommand({
             replyCtx.output.reply(opts)
           );
           const prevStart = (prevPage - 1) * IMAGES_PER_PAGE;
-          const prevEnd = Math.min(prevStart + IMAGES_PER_PAGE, allUrls.length);
+          const prevEnd = Math.min(
+            prevStart + IMAGES_PER_PAGE,
+            allUrls.length
+          );
           registerReply(prevMsg, prevPage, prevStart, prevEnd - prevStart);
           return;
         }
 
-        const num = parseInt(body);
+        const num = parseInt(body, 10);
         if (!isNaN(num) && num >= 1 && num <= allUrls.length) {
           const targetUrl = allUrls[num - 1];
           const loadingImg = await replyCtx.output.replyStyled(
@@ -285,7 +299,7 @@ const command = defineCommand({
           });
         }
 
-        const pageNum = parseInt(body.replace("page", "").trim());
+        const pageNum = parseInt(body.replace("page", "").trim(), 10);
         if (!isNaN(pageNum) && body.startsWith("page")) {
           if (pageNum < 1 || pageNum > totalPages) {
             return replyCtx.output.replyStyled(
